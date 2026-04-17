@@ -3,34 +3,45 @@
  *
  * Handles:
  *  1. Projectile-vs-tank collisions (player ↔ enemy, bidirectional).
- *  2. Tank-vs-obstacle blocking: pushes tanks out of rocks and living trees.
+ *  2. Projectile-vs-wreck absorption: shells are consumed by wrecks (the
+ *     wreck itself is indestructible, making it genuine cover).
  *  3. Projectile-vs-tree collisions: trees take shell damage and are destroyed
  *     when HP reaches zero, triggering debris particles.
+ *  4. Tank-vs-obstacle blocking: pushes tanks out of rocks and living trees.
+ *  5. Tank-vs-wreck blocking: same impulse resolve applied to WreckSystem
+ *     obstacles so live tanks cannot drive through demolished hulls.
  *
  * Callbacks (set before first update):
- *  onScoreAdd(points)      — called when an enemy tank is destroyed
- *  onPlayerDeath()         — called when the player tank reaches 0 HP
- *  onHit(position, owner)  — called on every non-lethal shell impact on a tank
- *  onKill(position, owner) — called when a shell destroys a tank
- *    owner: 'player' | 'enemy'
+ *  onScoreAdd(points)                    — called when an enemy tank is destroyed
+ *  onPlayerDeath()                       — called when the player tank reaches 0 HP
+ *  onHit(position, owner)                — called on every non-lethal shell impact
+ *    owner: 'player' | 'enemy' | 'wreck'
+ *  onKill(position, owner, tankData)     — called when a shell destroys a tank
+ *    owner: 'player' (player shell hit enemy) | 'enemy' (enemy shell hit player)
+ *    tankData: { position: Vector3, rotationY: number } — snapshot for wreck spawning
  *  onTreeHit(position)     — called on every non-lethal shell hit on a tree
  *  onTreeDestroy(position) — called when a shell destroys a tree
+ *  onKillFeed(killer, victim) — called on every tank kill for the kill feed UI
+ *    killer: display name of the entity that scored the kill ('Player', 'Enemy #2', …)
+ *    victim: display name of the destroyed tank
  */
 export class CollisionSystem {
   /**
    * @param {object} opts
-   * @param {import('../entities/Terrain.js').Terrain}       opts.terrain
-   * @param {import('../entities/Tank.js').Tank}             opts.player
-   * @param {import('./EnemySystem.js').EnemySystem}         opts.enemies
+   * @param {import('../entities/Terrain.js').Terrain}         opts.terrain
+   * @param {import('../entities/Tank.js').Tank}               opts.player
+   * @param {import('./EnemySystem.js').EnemySystem}           opts.enemies
    * @param {import('./ProjectileSystem.js').ProjectileSystem} opts.projectiles
-   * @param {import('./TreeSystem.js').TreeSystem}           [opts.treeSystem]
+   * @param {import('./TreeSystem.js').TreeSystem}             [opts.treeSystem]
+   * @param {import('./WreckSystem.js').WreckSystem}           [opts.wrecks]
    */
-  constructor({ terrain, player, enemies, projectiles, treeSystem = null }) {
+  constructor({ terrain, player, enemies, projectiles, treeSystem = null, wrecks = null }) {
     this.terrain = terrain;
     this.player = player;
     this.enemies = enemies;
     this.projectiles = projectiles;
     this.treeSystem = treeSystem;
+    this.wrecks = wrecks;
 
     this._onScoreAdd = null;
     this._onPlayerDeath = null;
@@ -38,6 +49,7 @@ export class CollisionSystem {
     this._onKill = null;
     this._onTreeHit = null;
     this._onTreeDestroy = null;
+    this._onKillFeed = null;
 
     /**
      * Approximate half-width of a tank hull for obstacle push-back.
@@ -76,7 +88,7 @@ export class CollisionSystem {
   }
 
   /**
-   * @param {(position: import('three').Vector3, owner: 'player'|'enemy') => void} cb
+   * @param {(position: import('three').Vector3, owner: string) => void} cb
    */
   onHit(cb) {
     this._onHit = cb;
@@ -84,7 +96,11 @@ export class CollisionSystem {
   }
 
   /**
-   * @param {(position: import('three').Vector3, owner: 'player'|'enemy') => void} cb
+   * @param {(
+   *   position: import('three').Vector3,
+   *   owner: string,
+   *   tankData: {position: import('three').Vector3, rotationY: number}
+   * ) => void} cb
    */
   onKill(cb) {
     this._onKill = cb;
@@ -100,6 +116,15 @@ export class CollisionSystem {
   /** @param {(position: import('three').Vector3) => void} cb */
   onTreeDestroy(cb) {
     this._onTreeDestroy = cb;
+    return this;
+  }
+
+  /**
+   * Called once per tank kill with display names for the kill feed.
+   * @param {(killer: string, victim: string) => void} cb
+   */
+  onKillFeed(cb) {
+    this._onKillFeed = cb;
     return this;
   }
 
@@ -134,8 +159,14 @@ export class CollisionSystem {
           e.takeDamage(p.damage);
           this.projectiles.remove(i);
           if (e.health <= 0) {
-            if (this._onKill) this._onKill(hitPos, 'player');
+            // Snapshot position+rotation before remove() clears the mesh from scene
+            const tankData = {
+              position: e.mesh.position.clone(),
+              rotationY: e.mesh.rotation.y,
+            };
+            if (this._onKillFeed) this._onKillFeed(this.player.name || 'Player', e.name || 'Enemy');
             this.enemies.remove(j);
+            if (this._onKill) this._onKill(hitPos, 'player', tankData);
             if (this._onScoreAdd) this._onScoreAdd(100);
           } else {
             if (this._onHit) this._onHit(hitPos, 'player');
@@ -155,10 +186,36 @@ export class CollisionSystem {
         const hitPos = p.mesh.position.clone();
         player.takeDamage(p.damage);
         this.projectiles.remove(i);
-        if (this._onHit) this._onHit(hitPos, 'enemy');
         if (player.health <= 0) {
-          if (this._onKill) this._onKill(hitPos, 'enemy');
+          const tankData = {
+            position: player.mesh.position.clone(),
+            rotationY: player.mesh.rotation.y,
+          };
+          if (this._onKillFeed) this._onKillFeed('Enemy', player.name || 'Player');
+          if (this._onKill) this._onKill(hitPos, 'enemy', tankData);
           if (this._onPlayerDeath) this._onPlayerDeath();
+        } else {
+          if (this._onHit) this._onHit(hitPos, 'enemy');
+        }
+      }
+    }
+
+    // Projectiles hitting wrecks — absorbed (no damage, wreck is indestructible)
+    if (this.wrecks) {
+      const wreckObs = this.wrecks.obstacles;
+      for (let i = projectiles.length - 1; i >= 0; i--) {
+        const p = projectiles[i];
+        for (const obs of wreckObs) {
+          const dx = p.mesh.position.x - obs.x;
+          const dz = p.mesh.position.z - obs.z;
+          const distSq = dx * dx + dz * dz;
+          const hitRadius = obs.radius + 0.3; // small fudge for shell size
+          if (distSq < hitRadius * hitRadius) {
+            const hitPos = p.mesh.position.clone();
+            this.projectiles.remove(i);
+            if (this._onHit) this._onHit(hitPos, 'wreck');
+            break; // projectile consumed
+          }
         }
       }
     }
@@ -222,8 +279,9 @@ export class CollisionSystem {
   }
 
   /**
-   * After all movement, push tanks out of rocks (permanent) and alive trees
-   * (removed once destroyed).  Operates in the XZ plane only.
+   * After all movement, push tanks out of rocks (permanent), alive trees
+   * (removed once destroyed), and wrecks (permanent until round reset).
+   * Operates in the XZ plane only.
    */
   _checkTankObstacleCollisions() {
     // Rock obstacles are permanent — from terrain.obstacles
@@ -241,10 +299,21 @@ export class CollisionSystem {
         this._resolveTreeObstacleCollision(enemy.mesh);
       }
     }
+
+    // Wrecks are indestructible cover — block all living tanks
+    if (this.wrecks) {
+      const wreckObs = this.wrecks.obstacles;
+      if (wreckObs.length > 0) {
+        this._resolveObstacleCollision(this.player.mesh, wreckObs);
+        for (const enemy of this.enemies.active) {
+          this._resolveObstacleCollision(enemy.mesh, wreckObs);
+        }
+      }
+    }
   }
 
   /**
-   * Resolve penetration between a tank mesh and each rock obstacle.
+   * Resolve penetration between a tank mesh and each rock/wreck obstacle.
    *
    * @param {import('three').Object3D}             mesh
    * @param {Array<{x: number, z: number, radius: number}>} obstacles
