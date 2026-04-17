@@ -21,6 +21,9 @@
  *    tankData: { position: Vector3, rotationY: number } — snapshot for wreck spawning
  *  onTreeHit(position)     — called on every non-lethal shell hit on a tree
  *  onTreeDestroy(position) — called when a shell destroys a tree
+ *  onKillFeed(killer, victim) — called on every tank kill for the kill feed UI
+ *    killer: display name of the entity that scored the kill ('Player', 'Enemy #2', …)
+ *    victim: display name of the destroyed tank
  */
 export class CollisionSystem {
   /**
@@ -46,6 +49,7 @@ export class CollisionSystem {
     this._onKill = null;
     this._onTreeHit = null;
     this._onTreeDestroy = null;
+    this._onKillFeed = null;
 
     /**
      * Approximate half-width of a tank hull for obstacle push-back.
@@ -115,6 +119,15 @@ export class CollisionSystem {
     return this;
   }
 
+  /**
+   * Called once per tank kill with display names for the kill feed.
+   * @param {(killer: string, victim: string) => void} cb
+   */
+  onKillFeed(cb) {
+    this._onKillFeed = cb;
+    return this;
+  }
+
   // ---------------------------------------------------------------------------
   // Per-frame entry point
   // ---------------------------------------------------------------------------
@@ -151,6 +164,7 @@ export class CollisionSystem {
               position: e.mesh.position.clone(),
               rotationY: e.mesh.rotation.y,
             };
+            if (this._onKillFeed) this._onKillFeed(this.player.name || 'Player', e.name || 'Enemy');
             this.enemies.remove(j);
             if (this._onKill) this._onKill(hitPos, 'player', tankData);
             if (this._onScoreAdd) this._onScoreAdd(100);
@@ -177,6 +191,7 @@ export class CollisionSystem {
             position: player.mesh.position.clone(),
             rotationY: player.mesh.rotation.y,
           };
+          if (this._onKillFeed) this._onKillFeed('Enemy', player.name || 'Player');
           if (this._onKill) this._onKill(hitPos, 'enemy', tankData);
           if (this._onPlayerDeath) this._onPlayerDeath();
         } else {

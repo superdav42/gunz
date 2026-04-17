@@ -179,6 +179,57 @@
       transform: scale(0.96);
     }
 
+    /* === Kill Feed === */
+    #kill-feed {
+      position: fixed;
+      top: 70px;
+      right: 16px;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 4px;
+      pointer-events: none;
+      z-index: 10;
+      max-width: 280px;
+    }
+
+    .kf-entry {
+      background: rgba(0, 0, 0, 0.55);
+      border-left: 2px solid rgba(255, 255, 255, 0.25);
+      padding: 4px 10px;
+      border-radius: 3px;
+      font-size: 13px;
+      font-weight: 600;
+      text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.9);
+      opacity: 1;
+      transition: opacity 0.5s ease;
+      white-space: nowrap;
+    }
+
+    .kf-entry.kf-fading {
+      opacity: 0;
+    }
+
+    /* Player / ally names — green */
+    .kf-player {
+      color: #4cff80;
+    }
+
+    /* Enemy names — red */
+    .kf-enemy {
+      color: #ff5050;
+    }
+
+    /* Fallback — white */
+    .kf-neutral {
+      color: #ffffff;
+    }
+
+    .kf-verb {
+      color: rgba(255, 255, 255, 0.65);
+      font-weight: 400;
+    }
+
     /* Desktop instructions */
     #desktop-hint {
       position: fixed;
@@ -225,6 +276,9 @@
     </div>
     <div class="fire-button">FIRE</div>
   </div>
+
+  <!-- Kill Feed -->
+  <div id="kill-feed"></div>
 
   <!-- Desktop hint -->
   <div id="desktop-hint">WASD to move &middot; Mouse to aim &middot; Click to fire</div>
