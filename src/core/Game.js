@@ -5,6 +5,7 @@ import { ProjectileSystem } from '../systems/ProjectileSystem.js';
 import { CollisionSystem } from '../systems/CollisionSystem.js';
 import { ParticleSystem } from '../systems/ParticleSystem.js';
 import { TreeSystem } from '../systems/TreeSystem.js';
+import { WreckSystem } from '../systems/WreckSystem.js';
 import { HUD } from '../ui/HUD.js';
 import { CameraController } from '../systems/CameraController.js';
 import { TeamManager } from './TeamManager.js';
@@ -84,6 +85,8 @@ export class Game {
     this.particles = new ParticleSystem(this.scene);
     // TreeSystem spawns tree entities with HP; CollisionSystem handles shell hits
     this.trees = new TreeSystem(this.scene, this.terrain);
+    // WreckSystem — demolished tanks become cover props on the field
+    this.wrecks = new WreckSystem(this.scene);
 
     // Dust-emission timers
     this._playerDustTimer = 0;
@@ -111,6 +114,7 @@ export class Game {
       enemies: this._enemiesAdapter,
       projectiles: this.projectiles,
       treeSystem: this.trees,
+      wrecks: this.wrecks,
     });
 
     this.collision
@@ -119,8 +123,12 @@ export class Game {
       .onHit((pos) => {
         this.particles.emitExplosion(pos, { count: 15, speed: 6, lifetime: 0.6 });
       })
-      .onKill((pos) => {
+      .onKill((pos, owner, tankData) => {
         this.particles.emitExplosion(pos, { count: 35, speed: 10 });
+        // Leave a wreck at the tank's last position as indestructible cover
+        if (tankData) {
+          this.wrecks.add(tankData.position, tankData.rotationY);
+        }
       })
       .onTreeHit((pos) => {
         // Small impact burst to show the tree was hit
@@ -307,6 +315,7 @@ export class Game {
     this.projectiles.reset();
     this.particles.reset();
     this.trees.reset();
+    this.wrecks.reset();
     this._playerDustTimer = 0;
     this._enemyDustTimer = 0;
     this.hud.hideGameOver();
