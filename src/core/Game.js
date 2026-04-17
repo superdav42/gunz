@@ -5,6 +5,7 @@ import { InputSystem } from '../systems/InputSystem.js';
 import { ProjectileSystem } from '../systems/ProjectileSystem.js';
 import { EnemySystem } from '../systems/EnemySystem.js';
 import { CollisionSystem } from '../systems/CollisionSystem.js';
+import { ParticleSystem } from '../systems/ParticleSystem.js';
 import { HUD } from '../ui/HUD.js';
 import { CameraController } from '../systems/CameraController.js';
 
@@ -75,9 +76,21 @@ export class Game {
     this.cameraController = new CameraController(this.camera, this.player);
     this.projectiles = new ProjectileSystem(this.scene);
     this.enemies = new EnemySystem(this.scene, this.player);
+    this.particles = new ParticleSystem(this.scene);
 
-    // Route enemy fire into the shared projectile pool
-    this.enemies.onFire(p => this.projectiles.add(p));
+    // Dust-emission timers (seconds until next dust puff)
+    this._playerDustTimer = 0;
+    this._enemyDustTimer = 0;
+
+    // Route enemy fire into the shared projectile pool + muzzle flash
+    this.enemies.onFire((projectile) => {
+      this.projectiles.add(projectile);
+      const flashDir = projectile.velocity.clone().normalize();
+      this.particles.emitMuzzleFlash(
+        projectile.mesh.position.clone(),
+        flashDir
+      );
+    });
 
     this.collision = new CollisionSystem({
       terrain: this.terrain,
@@ -87,7 +100,13 @@ export class Game {
     });
     this.collision
       .onScoreAdd(pts => { this.score += pts; })
-      .onPlayerDeath(() => this._gameOver());
+      .onPlayerDeath(() => this._gameOver())
+      .onHit((pos) => {
+        this.particles.emitExplosion(pos, { count: 15, speed: 6, lifetime: 0.6 });
+      })
+      .onKill((pos) => {
+        this.particles.emitExplosion(pos, { count: 35, speed: 10 });
+      });
 
     this.hud = new HUD();
   }
@@ -110,10 +129,20 @@ export class Game {
     // Update systems
     this.projectiles.update(dt);
     this.enemies.update(dt);
+    this.particles.update(dt);
     this.cameraController.update(dt);
 
     // Collision detection (projectiles + tank-vs-obstacle blocking)
     this.collision.update();
+
+    // Dust trails for active enemies (timer-gated)
+    this._enemyDustTimer -= dt;
+    if (this._enemyDustTimer <= 0) {
+      this._enemyDustTimer = 0.15;
+      for (const enemy of this.enemies.active) {
+        this.particles.emitDust(enemy.mesh.position);
+      }
+    }
 
     // HUD
     this.hud.update({
@@ -155,6 +184,12 @@ export class Game {
       const projectile = this.player.fire();
       if (projectile) {
         this.projectiles.add(projectile);
+        // Muzzle flash at projectile spawn point
+        const flashDir = projectile.velocity.clone().normalize();
+        this.particles.emitMuzzleFlash(
+          projectile.mesh.position.clone(),
+          flashDir
+        );
       }
     }
 
@@ -166,6 +201,13 @@ export class Game {
     const bound = 90;
     pos.x = THREE.MathUtils.clamp(pos.x, -bound, bound);
     pos.z = THREE.MathUtils.clamp(pos.z, -bound, bound);
+
+    // Dust trail while moving (timer-gated)
+    this._playerDustTimer -= dt;
+    if (this._playerDustTimer <= 0 && (input.forward || input.backward)) {
+      this._playerDustTimer = 0.15;
+      this.particles.emitDust(this.player.mesh.position);
+    }
   }
 
   _gameOver() {
@@ -180,6 +222,9 @@ export class Game {
     this.player.mesh.rotation.set(0, 0, 0);
     this.enemies.reset();
     this.projectiles.reset();
+    this.particles.reset();
+    this._playerDustTimer = 0;
+    this._enemyDustTimer = 0;
     this.hud.hideGameOver();
     this.start();
   }

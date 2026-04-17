@@ -7,8 +7,11 @@
  *     in Terrain.obstacles so they cannot pass through scenery.
  *
  * Callbacks (set before first update):
- *  onScoreAdd(points)  — called when an enemy tank is destroyed
- *  onPlayerDeath()     — called when the player tank reaches 0 HP
+ *  onScoreAdd(points)      — called when an enemy tank is destroyed
+ *  onPlayerDeath()         — called when the player tank reaches 0 HP
+ *  onHit(position, owner)  — called on every non-lethal shell impact
+ *  onKill(position, owner) — called when a shell destroys a tank
+ *    owner: 'player' (player shell hit enemy) | 'enemy' (enemy shell hit player)
  */
 export class CollisionSystem {
   /**
@@ -26,6 +29,8 @@ export class CollisionSystem {
 
     this._onScoreAdd = null;
     this._onPlayerDeath = null;
+    this._onHit = null;
+    this._onKill = null;
 
     /**
      * Approximate half-width of a tank hull for obstacle push-back.
@@ -44,6 +49,22 @@ export class CollisionSystem {
   /** @param {() => void} cb */
   onPlayerDeath(cb) {
     this._onPlayerDeath = cb;
+    return this;
+  }
+
+  /**
+   * @param {(position: import('three').Vector3, owner: 'player'|'enemy') => void} cb
+   */
+  onHit(cb) {
+    this._onHit = cb;
+    return this;
+  }
+
+  /**
+   * @param {(position: import('three').Vector3, owner: 'player'|'enemy') => void} cb
+   */
+  onKill(cb) {
+    this._onKill = cb;
     return this;
   }
 
@@ -70,13 +91,15 @@ export class CollisionSystem {
         const e = enemies[j];
         const dist = p.mesh.position.distanceTo(e.mesh.position);
         if (dist < 2.5) {
+          const hitPos = p.mesh.position.clone();
           e.takeDamage(p.damage);
           this.projectiles.remove(i);
           if (e.health <= 0) {
+            if (this._onKill) this._onKill(hitPos, 'player');
             this.enemies.remove(j);
-            if (this._onScoreAdd) {
-              this._onScoreAdd(100);
-            }
+            if (this._onScoreAdd) this._onScoreAdd(100);
+          } else {
+            if (this._onHit) this._onHit(hitPos, 'player');
           }
           break; // projectile consumed; skip remaining enemies
         }
@@ -90,10 +113,13 @@ export class CollisionSystem {
 
       const dist = p.mesh.position.distanceTo(player.mesh.position);
       if (dist < 2.5) {
+        const hitPos = p.mesh.position.clone();
         player.takeDamage(p.damage);
         this.projectiles.remove(i);
-        if (player.health <= 0 && this._onPlayerDeath) {
-          this._onPlayerDeath();
+        if (this._onHit) this._onHit(hitPos, 'enemy');
+        if (player.health <= 0) {
+          if (this._onKill) this._onKill(hitPos, 'enemy');
+          if (this._onPlayerDeath) this._onPlayerDeath();
         }
       }
     }
