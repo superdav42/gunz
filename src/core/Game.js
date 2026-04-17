@@ -7,6 +7,7 @@ import { ParticleSystem } from '../systems/ParticleSystem.js';
 import { TreeSystem } from '../systems/TreeSystem.js';
 import { WreckSystem } from '../systems/WreckSystem.js';
 import { HUD } from '../ui/HUD.js';
+import { KillFeed } from '../ui/KillFeed.js';
 import { CameraController } from '../systems/CameraController.js';
 import { TeamManager } from './TeamManager.js';
 import { AIController } from '../systems/AIController.js';
@@ -132,6 +133,9 @@ export class Game {
       .onTreeDestroy((pos) => {
         // Full debris burst when tree is felled
         this.particles.emitTreeDebris(pos);
+      })
+      .onKillFeed((killer, victim) => {
+        this.killFeed.addMessage(killer, victim);
       });
 
     // Notify on team elimination (will be consumed by MatchManager in t008)
@@ -149,6 +153,7 @@ export class Game {
     );
 
     this.hud = new HUD();
+    this.killFeed = new KillFeed();
   }
 
   start() {
@@ -266,6 +271,7 @@ export class Game {
     this._playerDustTimer = 0;
     this._enemyDustTimer = 0;
     this.hud.hideGameOver();
+    this.killFeed.clear();
     this.start();
   }
 

@@ -195,6 +195,7 @@ export class TeamManager {
         color: TEAM_COLORS[0].body,
         turretColor: TEAM_COLORS[0].turret,
         teamId: 0,
+        name: isPlayer ? 'Player' : `Ally ${i}`,
       });
 
       const pos = this._spawnPosition(i, 0);
@@ -218,6 +219,7 @@ export class TeamManager {
         color: TEAM_COLORS[1].body,
         turretColor: TEAM_COLORS[1].turret,
         teamId: 1,
+        name: `Enemy #${i + 1}`,
       });
 
       const pos = this._spawnPosition(i, 1);
