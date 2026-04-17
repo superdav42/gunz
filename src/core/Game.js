@@ -6,8 +6,10 @@ import { CollisionSystem } from '../systems/CollisionSystem.js';
 import { ParticleSystem } from '../systems/ParticleSystem.js';
 import { TreeSystem } from '../systems/TreeSystem.js';
 import { HUD } from '../ui/HUD.js';
+import { MatchOverlay } from '../ui/MatchOverlay.js';
 import { CameraController } from '../systems/CameraController.js';
 import { TeamManager } from './TeamManager.js';
+import { MatchManager } from './MatchManager.js';
 
 // Simple AI constants (temporary — will be replaced by AIController in t007)
 const AI_AGGRO_RANGE = 50;
@@ -115,7 +117,7 @@ export class Game {
 
     this.collision
       .onScoreAdd(pts => { this.score += pts; })
-      .onPlayerDeath(() => this._gameOver())
+      .onPlayerDeath(() => this._onPlayerTankDestroyed())
       .onHit((pos) => {
         this.particles.emitExplosion(pos, { count: 15, speed: 6, lifetime: 0.6 });
       })
@@ -131,13 +133,28 @@ export class Game {
         this.particles.emitTreeDebris(pos);
       });
 
-    // Notify on team elimination (will be consumed by MatchManager in t008)
-    this.teams.onTeamEliminated((teamId) => {
-      const winner = teamId === 1 ? 'Player Team' : 'Enemy Team';
-      console.info(`[TeamManager] Team ${teamId} eliminated — ${winner} wins the round.`);
-    });
+    // MatchManager drives the best-of-3 state machine.
+    // It registers its own onTeamEliminated hook with TeamManager internally.
+    this.match = new MatchManager(this.teams);
+    this.match
+      .onRoundReset(() => {
+        // Clear mid-round objects between rounds.
+        this.projectiles.reset();
+        this.particles.reset();
+        this._playerDustTimer = 0;
+        this._enemyDustTimer = 0;
+      })
+      .onMatchEnd((winnerId) => {
+        const playerWon = winnerId === 0;
+        console.info(`[Game] Match over — ${playerWon ? 'Player' : 'Enemy'} team wins!`);
+        // MatchOverlay handles showing the overlay; no extra action needed here.
+      });
 
     this.hud = new HUD();
+
+    // MatchOverlay binds to DOM overlays in index.html.
+    this.matchOverlay = new MatchOverlay(this);
+    this.match.onUIUpdate(ui => this.matchOverlay.update(ui));
   }
 
   start() {
@@ -152,34 +169,43 @@ export class Game {
 
     const dt = Math.min(this.clock.getDelta(), 0.05);
 
-    // Player input
-    this._updatePlayer(dt);
+    // MatchManager drives PRE_ROUND countdowns and ROUND_END timers.
+    // Must run every frame regardless of combat state.
+    this.match.update(dt);
 
-    // Temporary AI for enemy tanks (replaced by AIController in t007)
-    this._updateEnemyAI(dt);
+    // Gate all combat logic on an active round.
+    if (this.match.isActive()) {
+      // Player input
+      this._updatePlayer(dt);
 
-    // Ally AI placeholder — friendly tanks hold position for now
-    // (AIController in t007 will add proper target-selection for allies too)
+      // Temporary AI for enemy tanks (replaced by AIController in t007)
+      this._updateEnemyAI(dt);
 
-    // Update each alive tank's fire cooldown
-    for (const tank of this.teams.getAllLivingTanks()) {
-      tank.update(dt);
-    }
+      // Ally AI placeholder — friendly tanks hold position for now
+      // (AIController in t007 will add proper target-selection for allies too)
 
-    // Systems
-    this.projectiles.update(dt);
-    this.particles.update(dt);
-    this.cameraController.update(dt);
-    this.collision.update();
+      // Update each alive tank's fire cooldown
+      for (const tank of this.teams.getAllLivingTanks()) {
+        tank.update(dt);
+      }
 
-    // Dust trails for living enemy tanks
-    this._enemyDustTimer -= dt;
-    if (this._enemyDustTimer <= 0) {
-      this._enemyDustTimer = 0.15;
-      for (const tank of this.teams.getEnemyTanks()) {
-        this.particles.emitDust(tank.mesh.position);
+      // Collision and projectile systems
+      this.projectiles.update(dt);
+      this.collision.update();
+
+      // Dust trails for living enemy tanks
+      this._enemyDustTimer -= dt;
+      if (this._enemyDustTimer <= 0) {
+        this._enemyDustTimer = 0.15;
+        for (const tank of this.teams.getEnemyTanks()) {
+          this.particles.emitDust(tank.mesh.position);
+        }
       }
     }
+
+    // Particles and camera update every frame (explosions fade out during overlays).
+    this.particles.update(dt);
+    this.cameraController.update(dt);
 
     // HUD
     this.hud.update({
@@ -296,21 +322,38 @@ export class Game {
     }
   }
 
-  _gameOver() {
-    this.isRunning = false;
-    this.hud.showGameOver(this.score);
+  /**
+   * Called by CollisionSystem when the player's tank HP reaches 0.
+   * The player is still "in" the round — the tank is marked dead via TeamManager
+   * (CollisionSystem calls teams.killTank internally), which may trigger
+   * onTeamEliminated → MatchManager handles round/match end.
+   * Here we just ensure the camera detaches gracefully.
+   */
+  _onPlayerTankDestroyed() {
+    // Camera continues to follow the mesh position (now a wreck).
+    // MatchOverlay handles the ROUND_END / MATCH_END display.
+    console.info('[Game] Player tank destroyed.');
   }
 
+  /**
+   * Full match restart — resets the state machine and all subsystems.
+   * Called by the "Play Again" button in MatchOverlay.
+   */
   restart() {
     this.score = 0;
+    // Reset match state machine first (no team events should fire during reset)
+    this.match.reset();
+    // Reset field entities
     this.teams.reset();
     this.projectiles.reset();
     this.particles.reset();
     this.trees.reset();
     this._playerDustTimer = 0;
     this._enemyDustTimer = 0;
-    this.hud.hideGameOver();
-    this.start();
+    // Ensure game loop is running
+    if (!this.isRunning) {
+      this.start();
+    }
   }
 
   _onResize() {

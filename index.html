@@ -131,7 +131,130 @@
       letter-spacing: 1px;
     }
 
-    /* === Game Over === */
+    /* === Match overlays (PRE_ROUND, ROUND_END, MATCH_END) === */
+    .match-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.72);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      pointer-events: none;
+    }
+
+    .match-overlay.hidden {
+      display: none;
+    }
+
+    /* Enable pointer events only on the match-end overlay (has a button) */
+    #match-end-overlay {
+      pointer-events: auto;
+    }
+
+    .match-overlay-inner {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+      text-align: center;
+    }
+
+    .round-badge {
+      color: #fff;
+      font-size: 36px;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: 3px;
+      text-shadow: 2px 2px 8px rgba(0,0,0,0.8);
+    }
+
+    .round-score-display {
+      color: rgba(255,255,255,0.85);
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: 6px;
+    }
+
+    .round-countdown {
+      color: rgba(255,255,255,0.6);
+      font-size: 16px;
+      letter-spacing: 1px;
+    }
+
+    .match-result-title {
+      font-size: 56px;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: 4px;
+    }
+
+    #match-restart-btn {
+      margin-top: 8px;
+      padding: 14px 40px;
+      font-size: 18px;
+      font-weight: 700;
+      color: #fff;
+      background: #4caf50;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    #match-restart-btn:active {
+      background: #388e3c;
+      transform: scale(0.96);
+    }
+
+    /* === Round indicator (HUD top centre) === */
+    #round-indicator {
+      position: fixed;
+      top: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      pointer-events: none;
+      z-index: 11;
+    }
+
+    #round-label {
+      color: rgba(255,255,255,0.75);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      text-shadow: 1px 1px 3px rgba(0,0,0,0.8);
+    }
+
+    .round-pips {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .pip {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,0.5);
+      background: transparent;
+    }
+
+    .pip-team0.won { background: #4caf50; border-color: #4caf50; }
+    .pip-team1.won { background: #f44336; border-color: #f44336; }
+
+    .pip-sep {
+      color: rgba(255,255,255,0.5);
+      font-size: 14px;
+      line-height: 1;
+    }
+
+    /* === Legacy Game Over (hidden — MatchOverlay handles all end states) === */
     #game-over {
       position: fixed;
       inset: 0;
@@ -226,10 +349,43 @@
     <div class="fire-button">FIRE</div>
   </div>
 
+  <!-- Round indicator (HUD top centre — shows round number and win pips) -->
+  <div id="round-indicator">
+    <div id="round-label">Round 1</div>
+    <div id="round-pips" class="round-pips"></div>
+  </div>
+
   <!-- Desktop hint -->
   <div id="desktop-hint">WASD to move &middot; Mouse to aim &middot; Click to fire</div>
 
-  <!-- Game Over -->
+  <!-- PRE_ROUND: countdown before each round -->
+  <div id="pre-round-overlay" class="match-overlay">
+    <div class="match-overlay-inner">
+      <div class="round-badge">Round <span id="pre-round-number">1</span></div>
+      <div class="round-score-display" id="pre-round-score">0 &mdash; 0</div>
+      <div class="round-countdown">Starting in <span id="pre-round-timer">3</span>&hellip;</div>
+    </div>
+  </div>
+
+  <!-- ROUND_END: result + countdown to next round -->
+  <div id="round-end-overlay" class="match-overlay hidden">
+    <div class="match-overlay-inner">
+      <div class="round-badge" id="round-end-title">GREEN TEAM WINS ROUND 1</div>
+      <div class="round-score-display" id="round-end-score">1 &mdash; 0</div>
+      <div class="round-countdown">Next round in <span id="round-end-timer">5</span>&hellip;</div>
+    </div>
+  </div>
+
+  <!-- MATCH_END: final result + play again -->
+  <div id="match-end-overlay" class="match-overlay hidden">
+    <div class="match-overlay-inner">
+      <div class="match-result-title" id="match-result-title">VICTORY!</div>
+      <div class="round-score-display" id="match-end-score">2 &mdash; 0</div>
+      <button id="match-restart-btn">Play Again</button>
+    </div>
+  </div>
+
+  <!-- Legacy Game Over (kept for HUD.js compatibility, hidden during normal play) -->
   <div id="game-over" class="hidden">
     <h1>DESTROYED</h1>
     <div class="score-line">Score: <span id="final-score">0</span></div>
