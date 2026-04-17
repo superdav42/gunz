@@ -15,13 +15,13 @@ Full plan: [todo/PLANS.md](todo/PLANS.md) | Vision: [VISION.md](VISION.md)
 ## M2 — 6v6 Teams and Match System ~16h
 
 - [x] t006 TeamManager: create 2 teams of 6, spawn opposite sides, track alive/dead #auto-dispatch ~3h blocked-by:t001 ref:GH#10 verified:2026-04-17
-- [ ] t007 Rewrite EnemySystem → AIController: drives all 10 AI tanks (allies + enemies), target selection by team #auto-dispatch ~3h blocked-by:t006 logged:2026-04-16
-- [ ] t008 MatchManager: best-of-3 state machine (PRE_ROUND → ACTIVE → ROUND_END → MATCH_END) #auto-dispatch ~3h blocked-by:t006 logged:2026-04-16
+- [ ] t007 Rewrite EnemySystem → AIController: drives all 10 AI tanks (allies + enemies), target selection by team #auto-dispatch ~3h blocked-by:t006 ref:GH#14 logged:2026-04-16
+- [ ] t008 MatchManager: best-of-3 state machine (PRE_ROUND → ACTIVE → ROUND_END → MATCH_END) #auto-dispatch ~3h blocked-by:t006 ref:GH#15 logged:2026-04-16
 - [ ] t009 Round reset: respawn all 12 tanks, full HP/ammo, clear wrecks/projectiles, keep loadout #auto-dispatch ~1h blocked-by:t008 logged:2026-04-16
-- [ ] t010 StatsTracker: per-round damage dealt, kills, assists, survival tracking #auto-dispatch ~2h blocked-by:t006 logged:2026-04-16
+- [ ] t010 StatsTracker: per-round damage dealt, kills, assists, survival tracking #auto-dispatch ~2h blocked-by:t006 ref:GH#16 logged:2026-04-16
 - [ ] t011 Performance rewards calculator from StatsTracker output (VISION.md reward table) #auto-dispatch ~1h blocked-by:t010 logged:2026-04-16
-- [ ] t012 KillFeed UI: top-right destruction messages, auto-fade, stack limit #auto-dispatch ~1h blocked-by:t006 logged:2026-04-16
-- [ ] t013 Scoreboard UI: hold Tab shows all 12 tanks with HP/kills/damage/status #auto-dispatch ~2h blocked-by:t006 logged:2026-04-16
+- [ ] t012 KillFeed UI: top-right destruction messages, auto-fade, stack limit #auto-dispatch ~1h blocked-by:t006 ref:GH#18 logged:2026-04-16
+- [ ] t013 Scoreboard UI: hold Tab shows all 12 tanks with HP/kills/damage/status #auto-dispatch ~2h blocked-by:t006 ref:GH#19 logged:2026-04-16
 
 ## M3 — Economy and Shop ~10h
 
