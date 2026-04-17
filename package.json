@@ -1,0 +1,18 @@
+{
+  "name": "gunz",
+  "version": "0.1.0",
+  "description": "Browser-based mobile-first 3D tank combat game",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "three": "^0.172.0"
+  },
+  "devDependencies": {
+    "vite": "^6.3.2"
+  },
+  "license": "MIT"
+}

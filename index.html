@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>GUNZ - Tank Combat</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      touch-action: none;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    #game-canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    /* === HUD === */
+    #hud {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      pointer-events: none;
+      z-index: 10;
+      padding: 12px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+    }
+
+    .hud-left, .hud-right {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .hud-label {
+      color: rgba(255, 255, 255, 0.7);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
+    }
+
+    .hud-value {
+      color: #fff;
+      font-size: 22px;
+      font-weight: 700;
+      text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+    }
+
+    .health-bar-outer {
+      width: 140px;
+      height: 14px;
+      background: rgba(0, 0, 0, 0.5);
+      border-radius: 7px;
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,0.2);
+    }
+
+    .health-bar-inner {
+      height: 100%;
+      width: 100%;
+      background: #4caf50;
+      border-radius: 7px;
+      transition: width 0.3s, background-color 0.3s;
+    }
+
+    /* === Touch controls overlay === */
+    #touch-controls {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 180px;
+      pointer-events: none;
+      z-index: 10;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      padding: 0 20px 20px;
+    }
+
+    .joystick-zone {
+      width: 120px;
+      height: 120px;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,0.25);
+      background: rgba(255,255,255,0.08);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .joystick-knob {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.3);
+    }
+
+    .fire-button {
+      width: 80px;
+      height: 80px;
+      border-radius: 50%;
+      background: rgba(255, 50, 50, 0.5);
+      border: 3px solid rgba(255, 100, 100, 0.7);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    /* === Game Over === */
+    #game-over {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.75);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      gap: 16px;
+    }
+
+    #game-over.hidden {
+      display: none;
+    }
+
+    #game-over h1 {
+      color: #f44336;
+      font-size: 48px;
+      text-shadow: 0 0 20px rgba(244, 67, 54, 0.6);
+    }
+
+    #game-over .score-line {
+      color: #fff;
+      font-size: 24px;
+    }
+
+    #restart-btn {
+      margin-top: 12px;
+      padding: 14px 40px;
+      font-size: 18px;
+      font-weight: 700;
+      color: #fff;
+      background: #4caf50;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      pointer-events: auto;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    #restart-btn:active {
+      background: #388e3c;
+      transform: scale(0.96);
+    }
+
+    /* Desktop instructions */
+    #desktop-hint {
+      position: fixed;
+      bottom: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: rgba(255,255,255,0.4);
+      font-size: 12px;
+      z-index: 10;
+      pointer-events: none;
+    }
+
+    @media (pointer: coarse) {
+      #desktop-hint { display: none; }
+    }
+
+    @media (pointer: fine) {
+      #touch-controls { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="game-canvas"></canvas>
+
+  <!-- HUD -->
+  <div id="hud">
+    <div class="hud-left">
+      <span class="hud-label">Health</span>
+      <div class="health-bar-outer">
+        <div class="health-bar-inner" id="health-fill"></div>
+      </div>
+      <span class="hud-label">Ammo: <span class="hud-value" id="ammo">30</span></span>
+    </div>
+    <div class="hud-right">
+      <span class="hud-label">Score</span>
+      <span class="hud-value" id="score">0</span>
+    </div>
+  </div>
+
+  <!-- Mobile touch controls indicator -->
+  <div id="touch-controls">
+    <div class="joystick-zone">
+      <div class="joystick-knob"></div>
+    </div>
+    <div class="fire-button">FIRE</div>
+  </div>
+
+  <!-- Desktop hint -->
+  <div id="desktop-hint">WASD to move &middot; Mouse to aim &middot; Click to fire</div>
+
+  <!-- Game Over -->
+  <div id="game-over" class="hidden">
+    <h1>DESTROYED</h1>
+    <div class="score-line">Score: <span id="final-score">0</span></div>
+    <button id="restart-btn">Play Again</button>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
