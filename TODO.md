@@ -9,7 +9,7 @@ Full plan: [todo/PLANS.md](todo/PLANS.md) | Vision: [VISION.md](VISION.md)
 - [x] t001 Extract CollisionSystem from Game.js, add tank-vs-obstacle blocking (rocks, trees) #auto-dispatch ~2h ref:GH#1 verified:2026-04-17
 - [x] t002 Track trees as entities with HP, destructible by tank shells, spawn debris #auto-dispatch ~1.5h blocked-by:t005,t003 ref:GH#8 verified:2026-04-17
 - [x] t003 ParticleSystem: pool-based emitter for explosions, muzzle flash, dust trails #auto-dispatch ~2h ref:GH#2 verified:2026-04-17
-- [ ] t004 Tank wrecks: demolished tanks become indestructible cover props on field #auto-dispatch ~1.5h blocked-by:t001,t003 ref:GH#9 logged:2026-04-16
+- [x] t004 Tank wrecks: demolished tanks become indestructible cover props on field #auto-dispatch ~1.5h blocked-by:t001,t003 ref:GH#9 verified:2026-04-17
 - [x] t005 Expose obstacle positions/radii from Terrain for CollisionSystem queries #auto-dispatch ~1h ref:GH#3 verified:2026-04-17
 
 ## M2 — 6v6 Teams and Match System ~16h
@@ -80,7 +80,7 @@ Full plan: [todo/PLANS.md](todo/PLANS.md) | Vision: [VISION.md](VISION.md)
 - [ ] t048 VillageGenerator: procedural clusters of 3-8 buildings with dirt paths #auto-dispatch ~2h blocked-by:t047 logged:2026-04-16
 - [ ] t049 Bridges and walls: destructible bridge, low walls/fences tanks drive through #auto-dispatch ~1.5h blocked-by:t047 logged:2026-04-16
 - [ ] t050 Rivers/mud zones: visual planes + movement penalty (40% tank, 60% soldier) #auto-dispatch ~2h blocked-by:t001 logged:2026-04-16
-- [ ] t051 Pre-placed wrecked tank props as indestructible cover #auto-dispatch ~1h blocked-by:t004 logged:2026-04-16
+- [ ] t051 Pre-placed wrecked tank props as indestructible cover #auto-dispatch ~1h blocked-by:t004 ref:GH#23 logged:2026-04-16
 - [ ] t052 Map layout: balanced 6v6 design with spawn zones, center village, river lanes #auto-dispatch ~1h blocked-by:t048,t050 logged:2026-04-16
 
 ## M10 — Skins and Polish ~12h

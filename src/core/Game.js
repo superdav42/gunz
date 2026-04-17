@@ -84,8 +84,12 @@ export class Game {
     this.particles = new ParticleSystem(this.scene);
     // TreeSystem spawns tree entities with HP; CollisionSystem handles shell hits
     this.trees = new TreeSystem(this.scene, this.terrain);
-    // WreckSystem — demolished tanks become cover props on the field
+    // WreckSystem — demolished tanks become cover props on the field.
+    // spawnInitial places pre-placed wreck props at map start (t051); these
+    // persist across round resets.  Dynamic wrecks (from kills) are added via
+    // add() and cleared between rounds.
     this.wrecks = new WreckSystem(this.scene);
+    this.wrecks.spawnInitial(this.terrain);
 
     // Dust-emission timers
     this._playerDustTimer = 0;
