@@ -14,6 +14,7 @@ import { CameraController } from '../systems/CameraController.js';
 import { TeamManager } from './TeamManager.js';
 import { AIController } from '../systems/AIController.js';
 import { MatchManager } from './MatchManager.js';
+import { StatsTracker } from '../systems/StatsTracker.js';
 
 export class Game {
   constructor(canvas) {
@@ -141,14 +142,38 @@ export class Game {
         // Full debris burst when tree is felled
         this.particles.emitTreeDebris(pos);
       })
+      .onDamageDealt((tank, amount) => {
+        this.stats.recordPlayerDamage(tank, amount);
+      })
+      .onTankKilled((tank, byPlayer) => {
+        this.stats.recordTankKilled(tank, byPlayer);
+      })
       .onKillFeed((killer, victim) => {
         this.killFeed.addMessage(killer, victim);
       });
+
+    // StatsTracker: per-round damage dealt, kills, assists, survival (t010)
+    this.stats = new StatsTracker();
+    this.stats.startRound();
 
     // MatchManager drives the best-of-3 state machine.
     // It registers its own onTeamEliminated hook with TeamManager internally.
     this.match = new MatchManager(this.teams);
     this.match
+      .onRoundStart(() => {
+        // Begin a fresh round of stat accumulation.
+        this.stats.startRound();
+      })
+      .onRoundEnd((roundWinnerId) => {
+        // Finalise stats while team alive-state still reflects the round outcome.
+        const playerAlive = this.teams.teams[0].slots[0].alive;
+        const result = this.stats.endRound(playerAlive);
+        console.info(
+          `[StatsTracker] Round ${this.match.roundNumber} ended — ` +
+          `player ${playerAlive ? 'survived' : 'destroyed'}. ` +
+          `Damage: ${result.damageDealt}, K: ${result.kills}, A: ${result.assists}`
+        );
+      })
       .onRoundReset(() => {
         // Clear mid-round objects between rounds.
         this.projectiles.reset();
@@ -159,8 +184,13 @@ export class Game {
       })
       .onMatchEnd((winnerId) => {
         const playerWon = winnerId === 0;
-        console.info(`[Game] Match over — ${playerWon ? 'Player' : 'Enemy'} team wins!`);
-        // MatchOverlay handles showing the overlay; no extra action needed here.
+        const matchStats = this.stats.getMatchStats();
+        console.info(
+          `[Game] Match over — ${playerWon ? 'Player' : 'Enemy'} team wins! ` +
+          `Match totals — Damage: ${matchStats.totals.damageDealt}, ` +
+          `K: ${matchStats.totals.kills}, A: ${matchStats.totals.assists}, ` +
+          `Rounds survived: ${matchStats.totals.roundsSurvived}`
+        );
       });
 
     // AIController drives all 10 AI tanks (team 0 slots 1-5 as allies, team 1 all 6 as enemies)
@@ -224,17 +254,22 @@ export class Game {
           this.particles.emitDust(tank.mesh.position);
         }
       }
+
+      // StatsTracker: advance survival timer only during active round
+      this.stats.update(dt);
     }
 
     // Particles and camera update every frame (explosions fade out during overlays).
     this.particles.update(dt);
     this.cameraController.update(dt);
 
-    // HUD
+    // HUD — pass live round stats for the counters
+    const roundStats = this.stats.getCurrentRoundStats();
     this.hud.update({
       score: this.score,
       health: this.player.health,
       ammo: this.player.ammo,
+      stats: roundStats,
     });
 
     // Scoreboard: show when Tab is held
@@ -303,6 +338,8 @@ export class Game {
    * which may trigger onTeamEliminated → MatchManager handles round/match end.
    */
   _onPlayerTankDestroyed() {
+    // Notify StatsTracker to stop the survival timer for this round.
+    this.stats.recordPlayerDeath();
     // MatchOverlay handles ROUND_END / MATCH_END display.
     console.info('[Game] Player tank destroyed.');
   }
@@ -315,6 +352,8 @@ export class Game {
     this.score = 0;
     // Reset match state machine first (no team events should fire during reset)
     this.match.reset();
+    // Reset StatsTracker for the new match
+    this.stats.reset();
     // Reset field entities
     this.teams.reset();
     this.projectiles.reset();

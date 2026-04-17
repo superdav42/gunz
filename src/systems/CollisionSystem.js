@@ -19,9 +19,14 @@
  *  onKill(position, owner, tankData)     — called when a shell destroys a tank
  *    owner: 'player' (player shell hit enemy) | 'enemy' (enemy shell hit player)
  *    tankData: { position: Vector3, rotationY: number } — snapshot for wreck spawning
- *  onTreeHit(position)     — called on every non-lethal shell hit on a tree
- *  onTreeDestroy(position) — called when a shell destroys a tree
- *  onKillFeed(killer, victim) — called on every tank kill for the kill feed UI
+ *  onDamageDealt(tank, amount)           — called when a player shell hits an enemy (every hit,
+ *                                          including the lethal shot). Used by StatsTracker (t010).
+ *  onTankKilled(tank, byPlayer)          — called just before an enemy tank is removed.
+ *                                          byPlayer: true = player's shell was lethal.
+ *                                          Used by StatsTracker for kill/assist accounting.
+ *  onTreeHit(position)                   — called on every non-lethal shell hit on a tree
+ *  onTreeDestroy(position)               — called when a shell destroys a tree
+ *  onKillFeed(killer, victim)            — called on every tank kill for the kill feed UI
  *    killer: display name of the entity that scored the kill ('Player', 'Enemy #2', …)
  *    victim: display name of the destroyed tank
  */
@@ -47,6 +52,8 @@ export class CollisionSystem {
     this._onPlayerDeath = null;
     this._onHit = null;
     this._onKill = null;
+    this._onDamageDealt = null;
+    this._onTankKilled = null;
     this._onTreeHit = null;
     this._onTreeDestroy = null;
     this._onKillFeed = null;
@@ -107,6 +114,22 @@ export class CollisionSystem {
     return this;
   }
 
+  /**
+   * @param {(tank: import('../entities/Tank.js').Tank, amount: number) => void} cb
+   */
+  onDamageDealt(cb) {
+    this._onDamageDealt = cb;
+    return this;
+  }
+
+  /**
+   * @param {(tank: import('../entities/Tank.js').Tank, byPlayer: boolean) => void} cb
+   */
+  onTankKilled(cb) {
+    this._onTankKilled = cb;
+    return this;
+  }
+
   /** @param {(position: import('three').Vector3) => void} cb */
   onTreeHit(cb) {
     this._onTreeHit = cb;
@@ -156,9 +179,11 @@ export class CollisionSystem {
         const dist = p.mesh.position.distanceTo(e.mesh.position);
         if (dist < 2.5) {
           const hitPos = p.mesh.position.clone();
-          // Record damage dealt before applying it (health may clamp to 0)
+          // Cap actualDamage to remaining HP so scoreboard stats don't over-count overkill.
           const actualDamage = Math.min(p.damage, e.health);
           if (p.ownerTank) p.ownerTank.recordDamage(actualDamage);
+          // StatsTracker callback also uses the capped value (t010).
+          if (this._onDamageDealt) this._onDamageDealt(e, actualDamage);
           e.takeDamage(p.damage);
           this.projectiles.remove(i);
           if (e.health <= 0) {
@@ -169,6 +194,7 @@ export class CollisionSystem {
               rotationY: e.mesh.rotation.y,
             };
             if (this._onKillFeed) this._onKillFeed(this.player.name || 'Player', e.name || 'Enemy');
+            if (this._onTankKilled) this._onTankKilled(e, true);
             this.enemies.remove(j);
             if (this._onKill) this._onKill(hitPos, 'player', tankData);
             if (this._onScoreAdd) this._onScoreAdd(100);

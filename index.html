@@ -353,6 +353,41 @@
       font-weight: 400;
     }
 
+    /* === Stats panel (t010: damage / kills / assists) === */
+    #stats-panel {
+      position: fixed;
+      top: 60px;
+      right: 16px;
+      pointer-events: none;
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .stat-row {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+    }
+
+    .stat-label {
+      color: rgba(255, 255, 255, 0.6);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
+      min-width: 52px;
+      text-align: right;
+    }
+
+    .stat-value {
+      color: #fff;
+      font-size: 16px;
+      font-weight: 700;
+      text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+    }
+
     /* Desktop instructions */
     #desktop-hint {
       position: fixed;
@@ -553,6 +588,22 @@
     <div class="fire-button">FIRE</div>
   </div>
 
+
+  <!-- Stats panel (t010: live damage / kills / assists counters) -->
+  <div id="stats-panel">
+    <div class="stat-row">
+      <span class="stat-label">Dmg</span>
+      <span class="stat-value" id="stat-damage">0</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Kills</span>
+      <span class="stat-value" id="stat-kills">0</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Assists</span>
+      <span class="stat-value" id="stat-assists">0</span>
+    </div>
+  </div>
 
   <!-- Round indicator (HUD top centre — shows round number and win pips) -->
   <div id="round-indicator">
