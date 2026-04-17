@@ -4,6 +4,7 @@ import { InputSystem } from '../systems/InputSystem.js';
 import { ProjectileSystem } from '../systems/ProjectileSystem.js';
 import { CollisionSystem } from '../systems/CollisionSystem.js';
 import { ParticleSystem } from '../systems/ParticleSystem.js';
+import { TreeSystem } from '../systems/TreeSystem.js';
 import { HUD } from '../ui/HUD.js';
 import { CameraController } from '../systems/CameraController.js';
 import { TeamManager } from './TeamManager.js';
@@ -66,7 +67,7 @@ export class Game {
     // Camera
     this.camera = new THREE.PerspectiveCamera(60, 1, 0.1, 300);
 
-    // Terrain
+    // Terrain (rocks only — trees managed by TreeSystem)
     this.terrain = new Terrain();
     this.scene.add(this.terrain.mesh);
 
@@ -81,6 +82,8 @@ export class Game {
     this.cameraController = new CameraController(this.camera, this.player);
     this.projectiles = new ProjectileSystem(this.scene);
     this.particles = new ParticleSystem(this.scene);
+    // TreeSystem spawns tree entities with HP; CollisionSystem handles shell hits
+    this.trees = new TreeSystem(this.scene, this.terrain);
 
     // Dust-emission timers
     this._playerDustTimer = 0;
@@ -107,6 +110,7 @@ export class Game {
       player: this.player,
       enemies: this._enemiesAdapter,
       projectiles: this.projectiles,
+      treeSystem: this.trees,
     });
 
     this.collision
@@ -117,6 +121,14 @@ export class Game {
       })
       .onKill((pos) => {
         this.particles.emitExplosion(pos, { count: 35, speed: 10 });
+      })
+      .onTreeHit((pos) => {
+        // Small impact burst to show the tree was hit
+        this.particles.emitExplosion(pos, { count: 8, speed: 4, lifetime: 0.4 });
+      })
+      .onTreeDestroy((pos) => {
+        // Full debris burst when tree is felled
+        this.particles.emitTreeDebris(pos);
       });
 
     // Notify on team elimination (will be consumed by MatchManager in t008)
@@ -294,6 +306,7 @@ export class Game {
     this.teams.reset();
     this.projectiles.reset();
     this.particles.reset();
+    this.trees.reset();
     this._playerDustTimer = 0;
     this._enemyDustTimer = 0;
     this.hud.hideGameOver();
