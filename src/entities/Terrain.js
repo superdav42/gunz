@@ -1,20 +1,10 @@
 import * as THREE from 'three';
 
-/**
- * Obstacle record for CollisionSystem queries.
- * @typedef {Object} ObstacleRecord
- * @property {number} x - World X position.
- * @property {number} z - World Z position.
- * @property {number} radius - Approximate collision radius (metres).
- * @property {'rock'|'tree'} type - Obstacle category.
- */
-
 export class Terrain {
   constructor() {
     this.size = 200;
     this.segments = 80;
-
-    /** @type {ObstacleRecord[]} */
+    /** Collidable props: each entry is { x, z, radius } in world space. */
     this.obstacles = [];
 
     const geo = new THREE.PlaneGeometry(
@@ -86,8 +76,8 @@ export class Terrain {
       rock.castShadow = true;
       rock.receiveShadow = true;
       this.mesh.add(rock);
-      // DodecahedronGeometry has unit radius; XZ scale == collision radius
-      this.obstacles.push({ x, z, radius: scale, type: 'rock' });
+      // Register for collision — dodecahedron circumradius ≈ 1 world unit * scale
+      this.obstacles.push({ x, z, radius: scale * 1.0 });
     }
 
     // Simple trees (cylinder trunk + cone canopy)
@@ -119,17 +109,8 @@ export class Terrain {
 
       tree.position.set(x, this._heightFn(x, z), z);
       this.mesh.add(tree);
-      // Canopy ConeGeometry base radius is 1.5; use that as the collision footprint
-      this.obstacles.push({ x, z, radius: 1.5, type: 'tree' });
+      // Register for collision — canopy ConeGeometry base radius = 1.5
+      this.obstacles.push({ x, z, radius: 1.5 });
     }
-  }
-
-  /**
-   * Return all obstacle records for CollisionSystem queries.
-   * Each record has {x, z, radius, type}.
-   * @returns {ObstacleRecord[]}
-   */
-  getObstacles() {
-    return this.obstacles;
   }
 }
