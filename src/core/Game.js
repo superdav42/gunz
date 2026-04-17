@@ -4,6 +4,7 @@ import { Terrain } from '../entities/Terrain.js';
 import { InputSystem } from '../systems/InputSystem.js';
 import { ProjectileSystem } from '../systems/ProjectileSystem.js';
 import { EnemySystem } from '../systems/EnemySystem.js';
+import { CollisionSystem } from '../systems/CollisionSystem.js';
 import { HUD } from '../ui/HUD.js';
 import { CameraController } from '../systems/CameraController.js';
 
@@ -74,6 +75,20 @@ export class Game {
     this.cameraController = new CameraController(this.camera, this.player);
     this.projectiles = new ProjectileSystem(this.scene);
     this.enemies = new EnemySystem(this.scene, this.player);
+
+    // Route enemy fire into the shared projectile pool
+    this.enemies.onFire(p => this.projectiles.add(p));
+
+    this.collision = new CollisionSystem({
+      terrain: this.terrain,
+      player: this.player,
+      enemies: this.enemies,
+      projectiles: this.projectiles,
+    });
+    this.collision
+      .onScoreAdd(pts => { this.score += pts; })
+      .onPlayerDeath(() => this._gameOver());
+
     this.hud = new HUD();
   }
 
@@ -97,8 +112,8 @@ export class Game {
     this.enemies.update(dt);
     this.cameraController.update(dt);
 
-    // Collision detection
-    this._checkCollisions();
+    // Collision detection (projectiles + tank-vs-obstacle blocking)
+    this.collision.update();
 
     // HUD
     this.hud.update({
@@ -151,45 +166,6 @@ export class Game {
     const bound = 90;
     pos.x = THREE.MathUtils.clamp(pos.x, -bound, bound);
     pos.z = THREE.MathUtils.clamp(pos.z, -bound, bound);
-  }
-
-  _checkCollisions() {
-    const projectiles = this.projectiles.active;
-    const enemies = this.enemies.active;
-
-    for (let i = projectiles.length - 1; i >= 0; i--) {
-      const p = projectiles[i];
-      if (!p.isPlayerOwned) continue;
-
-      for (let j = enemies.length - 1; j >= 0; j--) {
-        const e = enemies[j];
-        const dist = p.mesh.position.distanceTo(e.mesh.position);
-        if (dist < 2.5) {
-          e.takeDamage(p.damage);
-          this.projectiles.remove(i);
-          if (e.health <= 0) {
-            this.enemies.remove(j);
-            this.score += 100;
-          }
-          break;
-        }
-      }
-    }
-
-    // Enemy projectiles hitting player
-    for (let i = projectiles.length - 1; i >= 0; i--) {
-      const p = projectiles[i];
-      if (p.isPlayerOwned) continue;
-
-      const dist = p.mesh.position.distanceTo(this.player.mesh.position);
-      if (dist < 2.5) {
-        this.player.takeDamage(p.damage);
-        this.projectiles.remove(i);
-        if (this.player.health <= 0) {
-          this._gameOver();
-        }
-      }
-    }
   }
 
   _gameOver() {
