@@ -4,6 +4,7 @@ import { InputSystem } from '../systems/InputSystem.js';
 import { ProjectileSystem } from '../systems/ProjectileSystem.js';
 import { CollisionSystem } from '../systems/CollisionSystem.js';
 import { ParticleSystem } from '../systems/ParticleSystem.js';
+import { TreeSystem } from '../systems/TreeSystem.js';
 import { HUD } from '../ui/HUD.js';
 import { CameraController } from '../systems/CameraController.js';
 import { TeamManager } from './TeamManager.js';
@@ -66,7 +67,7 @@ export class Game {
     // Camera
     this.camera = new THREE.PerspectiveCamera(60, 1, 0.1, 300);
 
-    // Terrain
+    // Terrain (rocks only — trees managed by TreeSystem)
     this.terrain = new Terrain();
     this.scene.add(this.terrain.mesh);
 
@@ -81,6 +82,8 @@ export class Game {
     this.cameraController = new CameraController(this.camera, this.player);
     this.projectiles = new ProjectileSystem(this.scene);
     this.particles = new ParticleSystem(this.scene);
+    // TreeSystem spawns tree entities with HP; CollisionSystem handles shell hits
+    this.trees = new TreeSystem(this.scene, this.terrain);
 
     // Dust-emission timers
     this._playerDustTimer = 0;
