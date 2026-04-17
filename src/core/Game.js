@@ -8,12 +8,7 @@ import { TreeSystem } from '../systems/TreeSystem.js';
 import { HUD } from '../ui/HUD.js';
 import { CameraController } from '../systems/CameraController.js';
 import { TeamManager } from './TeamManager.js';
-
-// Simple AI constants (temporary — will be replaced by AIController in t007)
-const AI_AGGRO_RANGE = 50;
-const AI_FIRE_RANGE = 30;
-const AI_MOVE_SPEED = 6;
-const AI_TURN_SPEED = 1.5;
+import { AIController } from '../systems/AIController.js';
 
 export class Game {
   constructor(canvas) {
@@ -137,6 +132,14 @@ export class Game {
       console.info(`[TeamManager] Team ${teamId} eliminated — ${winner} wins the round.`);
     });
 
+    // AIController drives all 10 AI tanks (team 0 slots 1-5 as allies, team 1 all 6 as enemies)
+    this.aiController = new AIController(
+      this.teams,
+      this.projectiles,
+      this.particles,
+      this.terrain
+    );
+
     this.hud = new HUD();
   }
 
@@ -155,11 +158,8 @@ export class Game {
     // Player input
     this._updatePlayer(dt);
 
-    // Temporary AI for enemy tanks (replaced by AIController in t007)
-    this._updateEnemyAI(dt);
-
-    // Ally AI placeholder — friendly tanks hold position for now
-    // (AIController in t007 will add proper target-selection for allies too)
+    // AIController: drives all ally (team 0, slots 1-5) and enemy AI tanks
+    this.aiController.update(dt);
 
     // Update each alive tank's fire cooldown
     for (const tank of this.teams.getAllLivingTanks()) {
@@ -189,59 +189,6 @@ export class Game {
     });
 
     this.renderer.render(this.scene, this.camera);
-  }
-
-  /**
-   * Minimal enemy AI: face and advance toward player, fire when in range.
-   * Temporary placeholder — AIController (t007) will replace this with
-   * proper target-selection per team.
-   *
-   * @param {number} dt
-   */
-  _updateEnemyAI(dt) {
-    const playerPos = this.player.mesh.position;
-
-    for (const enemy of this.teams.getEnemyTanks()) {
-      const pos = enemy.mesh.position;
-      const dist = pos.distanceTo(playerPos);
-
-      if (dist > AI_AGGRO_RANGE) continue;
-
-      // Turn hull toward player
-      const targetAngle = Math.atan2(playerPos.x - pos.x, playerPos.z - pos.z);
-      const hullAngle = enemy.mesh.rotation.y;
-      let diff = targetAngle - hullAngle;
-      while (diff > Math.PI) diff -= Math.PI * 2;
-      while (diff < -Math.PI) diff += Math.PI * 2;
-      enemy.mesh.rotation.y += Math.sign(diff) * Math.min(Math.abs(diff), AI_TURN_SPEED * dt);
-
-      // Advance if beyond optimal fire range
-      if (dist > AI_FIRE_RANGE * 0.7) {
-        enemy.mesh.translateZ(-AI_MOVE_SPEED * dt);
-      }
-
-      // Keep on terrain
-      pos.y = this.terrain.getHeightAt(pos.x, pos.z);
-
-      // Clamp to arena
-      const bound = 90;
-      pos.x = THREE.MathUtils.clamp(pos.x, -bound, bound);
-      pos.z = THREE.MathUtils.clamp(pos.z, -bound, bound);
-
-      // Aim turret and fire
-      enemy.setTurretAngle(targetAngle);
-      if (dist < AI_FIRE_RANGE && enemy.canFire()) {
-        const projectile = enemy.fire();
-        if (projectile) {
-          this.projectiles.add(projectile);
-          const flashDir = projectile.velocity.clone().normalize();
-          this.particles.emitMuzzleFlash(
-            projectile.mesh.position.clone(),
-            flashDir
-          );
-        }
-      }
-    }
   }
 
   _updatePlayer(dt) {
