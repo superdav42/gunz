@@ -64,6 +64,13 @@ export class MatchManager {
     this._onRoundStartCb = null;
     /** @private @type {(() => void) | null} */
     this._onRoundResetCb = null;
+    /**
+     * Fires when a round ends (team eliminated) — before the ROUND_END timer or
+     * MATCH_END, while teams still reflect their final round state.
+     * Receives the id of the team that WON the round.
+     * @private @type {((roundWinnerId: number) => void) | null}
+     */
+    this._onRoundEndCb = null;
     /** @private @type {((winnerId: number) => void) | null} */
     this._onMatchEndCb = null;
     /** @private @type {((ui: MatchUIState) => void) | null} */
@@ -132,6 +139,19 @@ export class MatchManager {
    */
   onRoundReset(cb) {
     this._onRoundResetCb = cb;
+    return this;
+  }
+
+  /**
+   * Register a callback fired the moment a round ends (a team is eliminated),
+   * before any timer or state transition.  Teams still reflect the round's final
+   * alive/dead state at the time this fires, making it safe to check player survival.
+   * Receives the id of the WINNING team (not the eliminated one).
+   * @param {(roundWinnerId: number) => void} cb
+   * @returns {this}
+   */
+  onRoundEnd(cb) {
+    this._onRoundEndCb = cb;
     return this;
   }
 
@@ -211,6 +231,11 @@ export class MatchManager {
       `Match score: ${this.roundWins[0]}-${this.roundWins[1]} ` +
       `(need ${WINS_NEEDED} to win match)`
     );
+
+    // Notify listeners (e.g. StatsTracker) while team states still reflect round-end.
+    if (this._onRoundEndCb) {
+      this._onRoundEndCb(winnerId);
+    }
 
     if (this.roundWins[winnerId] >= WINS_NEEDED) {
       this._enterMatchEnd(winnerId);

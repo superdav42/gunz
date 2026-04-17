@@ -6,9 +6,17 @@ export class HUD {
     this.ammoEl = document.getElementById('ammo');
     this.gameOverEl = document.getElementById('game-over');
     this.finalScoreEl = document.getElementById('final-score');
+
+    // Stats panel elements (t010)
+    this.statsDmgEl = document.getElementById('stat-damage');
+    this.statsKillsEl = document.getElementById('stat-kills');
+    this.statsAssistsEl = document.getElementById('stat-assists');
   }
 
-  update({ score, health, ammo }) {
+  /**
+   * @param {{ score: number, health: number, ammo: number, stats?: import('../systems/StatsTracker.js').RoundStats }} data
+   */
+  update({ score, health, ammo, stats }) {
     this.scoreEl.textContent = score;
     this.ammoEl.textContent = ammo;
 
@@ -21,6 +29,13 @@ export class HUD {
       this.healthBar.style.backgroundColor = '#ff9800';
     } else {
       this.healthBar.style.backgroundColor = '#f44336';
+    }
+
+    // Update stats panel if elements are present and data was provided
+    if (stats) {
+      if (this.statsDmgEl) this.statsDmgEl.textContent = stats.damageDealt;
+      if (this.statsKillsEl) this.statsKillsEl.textContent = stats.kills;
+      if (this.statsAssistsEl) this.statsAssistsEl.textContent = stats.assists;
     }
   }
 
