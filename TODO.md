@@ -7,14 +7,14 @@ Full plan: [todo/PLANS.md](todo/PLANS.md) | Vision: [VISION.md](VISION.md)
 ## M1 — Solid Tank Combat ~8h
 
 - [x] t001 Extract CollisionSystem from Game.js, add tank-vs-obstacle blocking (rocks, trees) #auto-dispatch ~2h ref:GH#1 verified:2026-04-17
-- [ ] t002 Track trees as entities with HP, destructible by tank shells, spawn debris #auto-dispatch ~1.5h blocked-by:t005,t003 logged:2026-04-16
+- [ ] t002 Track trees as entities with HP, destructible by tank shells, spawn debris #auto-dispatch ~1.5h blocked-by:t005,t003 ref:GH#8 logged:2026-04-16
 - [x] t003 ParticleSystem: pool-based emitter for explosions, muzzle flash, dust trails #auto-dispatch ~2h ref:GH#2 verified:2026-04-17
-- [ ] t004 Tank wrecks: demolished tanks become indestructible cover props on field #auto-dispatch ~1.5h blocked-by:t001,t003 logged:2026-04-16
+- [ ] t004 Tank wrecks: demolished tanks become indestructible cover props on field #auto-dispatch ~1.5h blocked-by:t001,t003 ref:GH#9 logged:2026-04-16
 - [x] t005 Expose obstacle positions/radii from Terrain for CollisionSystem queries #auto-dispatch ~1h ref:GH#3 verified:2026-04-17
 
 ## M2 — 6v6 Teams and Match System ~16h
 
-- [ ] t006 TeamManager: create 2 teams of 6, spawn opposite sides, track alive/dead #auto-dispatch ~3h blocked-by:t001 logged:2026-04-16
+- [ ] t006 TeamManager: create 2 teams of 6, spawn opposite sides, track alive/dead #auto-dispatch ~3h blocked-by:t001 ref:GH#10 logged:2026-04-16
 - [ ] t007 Rewrite EnemySystem → AIController: drives all 10 AI tanks (allies + enemies), target selection by team #auto-dispatch ~3h blocked-by:t006 logged:2026-04-16
 - [ ] t008 MatchManager: best-of-3 state machine (PRE_ROUND → ACTIVE → ROUND_END → MATCH_END) #auto-dispatch ~3h blocked-by:t006 logged:2026-04-16
 - [ ] t009 Round reset: respawn all 12 tanks, full HP/ammo, clear wrecks/projectiles, keep loadout #auto-dispatch ~1h blocked-by:t008 logged:2026-04-16
