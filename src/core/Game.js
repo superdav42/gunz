@@ -5,17 +5,14 @@ import { ProjectileSystem } from '../systems/ProjectileSystem.js';
 import { CollisionSystem } from '../systems/CollisionSystem.js';
 import { ParticleSystem } from '../systems/ParticleSystem.js';
 import { TreeSystem } from '../systems/TreeSystem.js';
+import { WreckSystem } from '../systems/WreckSystem.js';
 import { HUD } from '../ui/HUD.js';
+import { KillFeed } from '../ui/KillFeed.js';
 import { MatchOverlay } from '../ui/MatchOverlay.js';
 import { CameraController } from '../systems/CameraController.js';
 import { TeamManager } from './TeamManager.js';
+import { AIController } from '../systems/AIController.js';
 import { MatchManager } from './MatchManager.js';
-
-// Simple AI constants (temporary — will be replaced by AIController in t007)
-const AI_AGGRO_RANGE = 50;
-const AI_FIRE_RANGE = 30;
-const AI_MOVE_SPEED = 6;
-const AI_TURN_SPEED = 1.5;
 
 export class Game {
   constructor(canvas) {
@@ -86,6 +83,8 @@ export class Game {
     this.particles = new ParticleSystem(this.scene);
     // TreeSystem spawns tree entities with HP; CollisionSystem handles shell hits
     this.trees = new TreeSystem(this.scene, this.terrain);
+    // WreckSystem — demolished tanks become cover props on the field
+    this.wrecks = new WreckSystem(this.scene);
 
     // Dust-emission timers
     this._playerDustTimer = 0;
@@ -113,6 +112,7 @@ export class Game {
       enemies: this._enemiesAdapter,
       projectiles: this.projectiles,
       treeSystem: this.trees,
+      wrecks: this.wrecks,
     });
 
     this.collision
@@ -121,8 +121,12 @@ export class Game {
       .onHit((pos) => {
         this.particles.emitExplosion(pos, { count: 15, speed: 6, lifetime: 0.6 });
       })
-      .onKill((pos) => {
+      .onKill((pos, owner, tankData) => {
         this.particles.emitExplosion(pos, { count: 35, speed: 10 });
+        // Leave a wreck at the tank's last position as indestructible cover
+        if (tankData) {
+          this.wrecks.add(tankData.position, tankData.rotationY);
+        }
       })
       .onTreeHit((pos) => {
         // Small impact burst to show the tree was hit
@@ -131,6 +135,9 @@ export class Game {
       .onTreeDestroy((pos) => {
         // Full debris burst when tree is felled
         this.particles.emitTreeDebris(pos);
+      })
+      .onKillFeed((killer, victim) => {
+        this.killFeed.addMessage(killer, victim);
       });
 
     // MatchManager drives the best-of-3 state machine.
@@ -141,6 +148,7 @@ export class Game {
         // Clear mid-round objects between rounds.
         this.projectiles.reset();
         this.particles.reset();
+        this.wrecks.reset();
         this._playerDustTimer = 0;
         this._enemyDustTimer = 0;
       })
@@ -150,7 +158,16 @@ export class Game {
         // MatchOverlay handles showing the overlay; no extra action needed here.
       });
 
+    // AIController drives all 10 AI tanks (team 0 slots 1-5 as allies, team 1 all 6 as enemies)
+    this.aiController = new AIController(
+      this.teams,
+      this.projectiles,
+      this.particles,
+      this.terrain
+    );
+
     this.hud = new HUD();
+    this.killFeed = new KillFeed();
 
     // MatchOverlay binds to DOM overlays in index.html.
     this.matchOverlay = new MatchOverlay(this);
@@ -178,11 +195,8 @@ export class Game {
       // Player input
       this._updatePlayer(dt);
 
-      // Temporary AI for enemy tanks (replaced by AIController in t007)
-      this._updateEnemyAI(dt);
-
-      // Ally AI placeholder — friendly tanks hold position for now
-      // (AIController in t007 will add proper target-selection for allies too)
+      // AIController: drives all ally (team 0, slots 1-5) and enemy AI tanks
+      this.aiController.update(dt);
 
       // Update each alive tank's fire cooldown
       for (const tank of this.teams.getAllLivingTanks()) {
@@ -215,59 +229,6 @@ export class Game {
     });
 
     this.renderer.render(this.scene, this.camera);
-  }
-
-  /**
-   * Minimal enemy AI: face and advance toward player, fire when in range.
-   * Temporary placeholder — AIController (t007) will replace this with
-   * proper target-selection per team.
-   *
-   * @param {number} dt
-   */
-  _updateEnemyAI(dt) {
-    const playerPos = this.player.mesh.position;
-
-    for (const enemy of this.teams.getEnemyTanks()) {
-      const pos = enemy.mesh.position;
-      const dist = pos.distanceTo(playerPos);
-
-      if (dist > AI_AGGRO_RANGE) continue;
-
-      // Turn hull toward player
-      const targetAngle = Math.atan2(playerPos.x - pos.x, playerPos.z - pos.z);
-      const hullAngle = enemy.mesh.rotation.y;
-      let diff = targetAngle - hullAngle;
-      while (diff > Math.PI) diff -= Math.PI * 2;
-      while (diff < -Math.PI) diff += Math.PI * 2;
-      enemy.mesh.rotation.y += Math.sign(diff) * Math.min(Math.abs(diff), AI_TURN_SPEED * dt);
-
-      // Advance if beyond optimal fire range
-      if (dist > AI_FIRE_RANGE * 0.7) {
-        enemy.mesh.translateZ(-AI_MOVE_SPEED * dt);
-      }
-
-      // Keep on terrain
-      pos.y = this.terrain.getHeightAt(pos.x, pos.z);
-
-      // Clamp to arena
-      const bound = 90;
-      pos.x = THREE.MathUtils.clamp(pos.x, -bound, bound);
-      pos.z = THREE.MathUtils.clamp(pos.z, -bound, bound);
-
-      // Aim turret and fire
-      enemy.setTurretAngle(targetAngle);
-      if (dist < AI_FIRE_RANGE && enemy.canFire()) {
-        const projectile = enemy.fire();
-        if (projectile) {
-          this.projectiles.add(projectile);
-          const flashDir = projectile.velocity.clone().normalize();
-          this.particles.emitMuzzleFlash(
-            projectile.mesh.position.clone(),
-            flashDir
-          );
-        }
-      }
-    }
   }
 
   _updatePlayer(dt) {
@@ -324,14 +285,11 @@ export class Game {
 
   /**
    * Called by CollisionSystem when the player's tank HP reaches 0.
-   * The player is still "in" the round — the tank is marked dead via TeamManager
-   * (CollisionSystem calls teams.killTank internally), which may trigger
-   * onTeamEliminated → MatchManager handles round/match end.
-   * Here we just ensure the camera detaches gracefully.
+   * The tank is already marked dead in TeamManager (via enemies.remove adapter),
+   * which may trigger onTeamEliminated → MatchManager handles round/match end.
    */
   _onPlayerTankDestroyed() {
-    // Camera continues to follow the mesh position (now a wreck).
-    // MatchOverlay handles the ROUND_END / MATCH_END display.
+    // MatchOverlay handles ROUND_END / MATCH_END display.
     console.info('[Game] Player tank destroyed.');
   }
 
@@ -348,12 +306,12 @@ export class Game {
     this.projectiles.reset();
     this.particles.reset();
     this.trees.reset();
+    this.wrecks.reset();
     this._playerDustTimer = 0;
     this._enemyDustTimer = 0;
-    // Ensure game loop is running
-    if (!this.isRunning) {
-      this.start();
-    }
+    this.hud.hideGameOver();
+    this.killFeed.clear();
+    this.start();
   }
 
   _onResize() {

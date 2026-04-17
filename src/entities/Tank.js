@@ -13,10 +13,13 @@ export class Tank {
    * @param {number|null} [opts.color=null]       — override hull color (hex int)
    * @param {number|null} [opts.turretColor=null] — override turret color (hex int)
    * @param {number} [opts.teamId=1]              — 0 = player team, 1 = enemy team
+   * @param {string} [opts.name='']               — display name shown in kill feed
    */
-  constructor({ isPlayer = false, color = null, turretColor = null, teamId = 1 } = {}) {
+  constructor({ isPlayer = false, color = null, turretColor = null, teamId = 1, name = '' } = {}) {
     this.isPlayer = isPlayer;
     this.teamId = teamId;
+    /** @type {string} Display name for kill feed messages (e.g. 'Player', 'Enemy #2'). */
+    this.name = name || (isPlayer ? 'Player' : 'Enemy');
     this.health = 100;
     this.maxHealth = 100;
     this.ammo = 30;
