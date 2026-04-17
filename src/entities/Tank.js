@@ -26,6 +26,10 @@ export class Tank {
     this.fireCooldown = 0;
     this.fireRate = 0.3; // seconds between shots
 
+    // Per-round combat stats — displayed on the scoreboard (t013)
+    this.kills = 0;
+    this.damageDealt = 0;
+
     const base = isPlayer ? TANK_COLORS.player : TANK_COLORS.enemy;
     const palette = {
       body: color !== null ? color : base.body,
@@ -136,6 +140,7 @@ export class Tank {
       position: worldPos,
       direction: worldDir,
       isPlayerOwned: this.isPlayer,
+      ownerTank: this,
       speed: 50,
       damage: 25,
     });
@@ -143,6 +148,23 @@ export class Tank {
 
   takeDamage(amount) {
     this.health = Math.max(0, this.health - amount);
+  }
+
+  /**
+   * Record damage dealt by this tank against an opponent.
+   * Called by CollisionSystem when one of this tank's shells hits a target.
+   * @param {number} amount — actual HP removed (clamped to target's remaining HP)
+   */
+  recordDamage(amount) {
+    this.damageDealt += amount;
+  }
+
+  /**
+   * Record a kill credited to this tank.
+   * Called by CollisionSystem when this tank's shell destroys an opponent.
+   */
+  recordKill() {
+    this.kills++;
   }
 
   update(dt) {
@@ -155,5 +177,7 @@ export class Tank {
     this.health = this.maxHealth;
     this.ammo = 30;
     this.fireCooldown = 0;
+    this.kills = 0;
+    this.damageDealt = 0;
   }
 }

@@ -30,6 +30,8 @@ export class InputSystem {
     window.addEventListener('keydown', (e) => {
       this._keys[e.code] = true;
       if (e.code === 'Space') this._fireRequested = true;
+      // Prevent Tab from shifting browser focus while held for the scoreboard
+      if (e.code === 'Tab') e.preventDefault();
     });
     window.addEventListener('keyup', (e) => {
       this._keys[e.code] = false;
@@ -141,6 +143,8 @@ export class InputSystem {
         (joyActive && jdx > deadzone),
       fire: this._fireRequested,
       turretAngle: this._turretAngle,
+      /** true while Tab is held — shows/hides the scoreboard overlay */
+      tabHeld: !!this._keys['Tab'],
     };
 
     // Reset one-shot inputs
