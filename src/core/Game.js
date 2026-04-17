@@ -110,6 +110,7 @@ export class Game {
       player: this.player,
       enemies: this._enemiesAdapter,
       projectiles: this.projectiles,
+      treeSystem: this.trees,
     });
 
     this.collision
@@ -305,6 +306,7 @@ export class Game {
     this.teams.reset();
     this.projectiles.reset();
     this.particles.reset();
+    this.trees.reset();
     this._playerDustTimer = 0;
     this._enemyDustTimer = 0;
     this.hud.hideGameOver();
