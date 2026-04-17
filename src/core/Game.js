@@ -1,13 +1,18 @@
 import * as THREE from 'three';
-import { Tank } from '../entities/Tank.js';
 import { Terrain } from '../entities/Terrain.js';
 import { InputSystem } from '../systems/InputSystem.js';
 import { ProjectileSystem } from '../systems/ProjectileSystem.js';
-import { EnemySystem } from '../systems/EnemySystem.js';
 import { CollisionSystem } from '../systems/CollisionSystem.js';
 import { ParticleSystem } from '../systems/ParticleSystem.js';
 import { HUD } from '../ui/HUD.js';
 import { CameraController } from '../systems/CameraController.js';
+import { TeamManager } from './TeamManager.js';
+
+// Simple AI constants (temporary — will be replaced by AIController in t007)
+const AI_AGGRO_RANGE = 50;
+const AI_FIRE_RANGE = 30;
+const AI_MOVE_SPEED = 6;
+const AI_TURN_SPEED = 1.5;
 
 export class Game {
   constructor(canvas) {
@@ -65,39 +70,45 @@ export class Game {
     this.terrain = new Terrain();
     this.scene.add(this.terrain.mesh);
 
-    // Player tank
-    this.player = new Tank({ isPlayer: true });
-    this.player.mesh.position.set(0, 0, 0);
-    this.scene.add(this.player.mesh);
+    // TeamManager creates all 12 tanks and places them on the field.
+    // this.player is a convenience alias to teams[0].slots[0].tank.
+    this.teams = new TeamManager(this.scene, this.terrain);
+    this.player = this.teams.player;
   }
 
   _initSystems() {
     this.input = new InputSystem(this.canvas);
     this.cameraController = new CameraController(this.camera, this.player);
     this.projectiles = new ProjectileSystem(this.scene);
-    this.enemies = new EnemySystem(this.scene, this.player);
     this.particles = new ParticleSystem(this.scene);
 
-    // Dust-emission timers (seconds until next dust puff)
+    // Dust-emission timers
     this._playerDustTimer = 0;
     this._enemyDustTimer = 0;
 
-    // Route enemy fire into the shared projectile pool + muzzle flash
-    this.enemies.onFire((projectile) => {
-      this.projectiles.add(projectile);
-      const flashDir = projectile.velocity.clone().normalize();
-      this.particles.emitMuzzleFlash(
-        projectile.mesh.position.clone(),
-        flashDir
-      );
-    });
+    /**
+     * CollisionSystem compatibility adapter.
+     * CollisionSystem expects enemies.active (Tank[]) and enemies.remove(j).
+     * We delegate to TeamManager so kills are tracked correctly.
+     */
+    const teams = this.teams;
+    this._enemiesAdapter = {
+      get active() { return teams.getEnemyTanks(); },
+      remove: (j) => {
+        const living = teams.getEnemyTanks();
+        if (living[j]) {
+          teams.killTank(living[j]);
+        }
+      },
+    };
 
     this.collision = new CollisionSystem({
       terrain: this.terrain,
       player: this.player,
-      enemies: this.enemies,
+      enemies: this._enemiesAdapter,
       projectiles: this.projectiles,
     });
+
     this.collision
       .onScoreAdd(pts => { this.score += pts; })
       .onPlayerDeath(() => this._gameOver())
@@ -107,6 +118,12 @@ export class Game {
       .onKill((pos) => {
         this.particles.emitExplosion(pos, { count: 35, speed: 10 });
       });
+
+    // Notify on team elimination (will be consumed by MatchManager in t008)
+    this.teams.onTeamEliminated((teamId) => {
+      const winner = teamId === 1 ? 'Player Team' : 'Enemy Team';
+      console.info(`[TeamManager] Team ${teamId} eliminated — ${winner} wins the round.`);
+    });
 
     this.hud = new HUD();
   }
@@ -123,24 +140,32 @@ export class Game {
 
     const dt = Math.min(this.clock.getDelta(), 0.05);
 
-    // Update player from input
+    // Player input
     this._updatePlayer(dt);
 
-    // Update systems
+    // Temporary AI for enemy tanks (replaced by AIController in t007)
+    this._updateEnemyAI(dt);
+
+    // Ally AI placeholder — friendly tanks hold position for now
+    // (AIController in t007 will add proper target-selection for allies too)
+
+    // Update each alive tank's fire cooldown
+    for (const tank of this.teams.getAllLivingTanks()) {
+      tank.update(dt);
+    }
+
+    // Systems
     this.projectiles.update(dt);
-    this.enemies.update(dt);
     this.particles.update(dt);
     this.cameraController.update(dt);
-
-    // Collision detection (projectiles + tank-vs-obstacle blocking)
     this.collision.update();
 
-    // Dust trails for active enemies (timer-gated)
+    // Dust trails for living enemy tanks
     this._enemyDustTimer -= dt;
     if (this._enemyDustTimer <= 0) {
       this._enemyDustTimer = 0.15;
-      for (const enemy of this.enemies.active) {
-        this.particles.emitDust(enemy.mesh.position);
+      for (const tank of this.teams.getEnemyTanks()) {
+        this.particles.emitDust(tank.mesh.position);
       }
     }
 
@@ -154,10 +179,62 @@ export class Game {
     this.renderer.render(this.scene, this.camera);
   }
 
+  /**
+   * Minimal enemy AI: face and advance toward player, fire when in range.
+   * Temporary placeholder — AIController (t007) will replace this with
+   * proper target-selection per team.
+   *
+   * @param {number} dt
+   */
+  _updateEnemyAI(dt) {
+    const playerPos = this.player.mesh.position;
+
+    for (const enemy of this.teams.getEnemyTanks()) {
+      const pos = enemy.mesh.position;
+      const dist = pos.distanceTo(playerPos);
+
+      if (dist > AI_AGGRO_RANGE) continue;
+
+      // Turn hull toward player
+      const targetAngle = Math.atan2(playerPos.x - pos.x, playerPos.z - pos.z);
+      const hullAngle = enemy.mesh.rotation.y;
+      let diff = targetAngle - hullAngle;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      enemy.mesh.rotation.y += Math.sign(diff) * Math.min(Math.abs(diff), AI_TURN_SPEED * dt);
+
+      // Advance if beyond optimal fire range
+      if (dist > AI_FIRE_RANGE * 0.7) {
+        enemy.mesh.translateZ(-AI_MOVE_SPEED * dt);
+      }
+
+      // Keep on terrain
+      pos.y = this.terrain.getHeightAt(pos.x, pos.z);
+
+      // Clamp to arena
+      const bound = 90;
+      pos.x = THREE.MathUtils.clamp(pos.x, -bound, bound);
+      pos.z = THREE.MathUtils.clamp(pos.z, -bound, bound);
+
+      // Aim turret and fire
+      enemy.setTurretAngle(targetAngle);
+      if (dist < AI_FIRE_RANGE && enemy.canFire()) {
+        const projectile = enemy.fire();
+        if (projectile) {
+          this.projectiles.add(projectile);
+          const flashDir = projectile.velocity.clone().normalize();
+          this.particles.emitMuzzleFlash(
+            projectile.mesh.position.clone(),
+            flashDir
+          );
+        }
+      }
+    }
+  }
+
   _updatePlayer(dt) {
     const input = this.input.getState();
 
-    // Movement
     const moveSpeed = 12;
     const turnSpeed = 2.5;
 
@@ -174,17 +251,14 @@ export class Game {
       this.player.mesh.rotation.y -= turnSpeed * dt;
     }
 
-    // Turret aim (touch/mouse)
     if (input.turretAngle !== null) {
       this.player.setTurretAngle(input.turretAngle);
     }
 
-    // Fire
     if (input.fire && this.player.canFire()) {
       const projectile = this.player.fire();
       if (projectile) {
         this.projectiles.add(projectile);
-        // Muzzle flash at projectile spawn point
         const flashDir = projectile.velocity.clone().normalize();
         this.particles.emitMuzzleFlash(
           projectile.mesh.position.clone(),
@@ -202,7 +276,7 @@ export class Game {
     pos.x = THREE.MathUtils.clamp(pos.x, -bound, bound);
     pos.z = THREE.MathUtils.clamp(pos.z, -bound, bound);
 
-    // Dust trail while moving (timer-gated)
+    // Dust trail while moving
     this._playerDustTimer -= dt;
     if (this._playerDustTimer <= 0 && (input.forward || input.backward)) {
       this._playerDustTimer = 0.15;
@@ -217,10 +291,7 @@ export class Game {
 
   restart() {
     this.score = 0;
-    this.player.reset();
-    this.player.mesh.position.set(0, 0, 0);
-    this.player.mesh.rotation.set(0, 0, 0);
-    this.enemies.reset();
+    this.teams.reset();
     this.projectiles.reset();
     this.particles.reset();
     this._playerDustTimer = 0;

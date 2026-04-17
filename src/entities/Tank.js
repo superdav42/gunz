@@ -7,19 +7,27 @@ const TANK_COLORS = {
 };
 
 export class Tank {
-  constructor({ isPlayer = false, color = null } = {}) {
+  /**
+   * @param {object} [opts]
+   * @param {boolean} [opts.isPlayer=false]
+   * @param {number|null} [opts.color=null]       — override hull color (hex int)
+   * @param {number|null} [opts.turretColor=null] — override turret color (hex int)
+   * @param {number} [opts.teamId=1]              — 0 = player team, 1 = enemy team
+   */
+  constructor({ isPlayer = false, color = null, turretColor = null, teamId = 1 } = {}) {
     this.isPlayer = isPlayer;
+    this.teamId = teamId;
     this.health = 100;
     this.maxHealth = 100;
     this.ammo = 30;
     this.fireCooldown = 0;
     this.fireRate = 0.3; // seconds between shots
 
-    const palette = isPlayer ? TANK_COLORS.player : TANK_COLORS.enemy;
-    if (color) {
-      palette.body = color;
-      palette.turret = color;
-    }
+    const base = isPlayer ? TANK_COLORS.player : TANK_COLORS.enemy;
+    const palette = {
+      body: color !== null ? color : base.body,
+      turret: turretColor !== null ? turretColor : (color !== null ? color : base.turret),
+    };
 
     this.mesh = this._buildMesh(palette);
     this.turret = this.mesh.getObjectByName('turret');
