@@ -9,6 +9,7 @@ import { WreckSystem } from '../systems/WreckSystem.js';
 import { HUD } from '../ui/HUD.js';
 import { KillFeed } from '../ui/KillFeed.js';
 import { MatchOverlay } from '../ui/MatchOverlay.js';
+import { Scoreboard } from '../ui/Scoreboard.js';
 import { CameraController } from '../systems/CameraController.js';
 import { TeamManager } from './TeamManager.js';
 import { AIController } from '../systems/AIController.js';
@@ -168,6 +169,7 @@ export class Game {
 
     this.hud = new HUD();
     this.killFeed = new KillFeed();
+    this.scoreboard = new Scoreboard(this.teams);
 
     // MatchOverlay binds to DOM overlays in index.html.
     this.matchOverlay = new MatchOverlay(this);
@@ -190,10 +192,13 @@ export class Game {
     // Must run every frame regardless of combat state.
     this.match.update(dt);
 
+    // Snapshot input once per frame — getState() resets one-shot flags (fire).
+    const input = this.input.getState();
+
     // Gate all combat logic on an active round.
     if (this.match.isActive()) {
       // Player input
-      this._updatePlayer(dt);
+      this._updatePlayer(input, dt);
 
       // AIController: drives all ally (team 0, slots 1-5) and enemy AI tanks
       this.aiController.update(dt);
@@ -228,12 +233,17 @@ export class Game {
       ammo: this.player.ammo,
     });
 
+    // Scoreboard: show when Tab is held
+    this.scoreboard.update(input.tabHeld);
+
     this.renderer.render(this.scene, this.camera);
   }
 
-  _updatePlayer(dt) {
-    const input = this.input.getState();
-
+  /**
+   * @param {ReturnType<import('../systems/InputSystem.js').InputSystem['getState']>} input — pre-fetched this frame
+   * @param {number} dt
+   */
+  _updatePlayer(input, dt) {
     const moveSpeed = 12;
     const turnSpeed = 2.5;
 

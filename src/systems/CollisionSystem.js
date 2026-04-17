@@ -156,9 +156,13 @@ export class CollisionSystem {
         const dist = p.mesh.position.distanceTo(e.mesh.position);
         if (dist < 2.5) {
           const hitPos = p.mesh.position.clone();
+          // Record damage dealt before applying it (health may clamp to 0)
+          const actualDamage = Math.min(p.damage, e.health);
+          if (p.ownerTank) p.ownerTank.recordDamage(actualDamage);
           e.takeDamage(p.damage);
           this.projectiles.remove(i);
           if (e.health <= 0) {
+            if (p.ownerTank) p.ownerTank.recordKill();
             // Snapshot position+rotation before remove() clears the mesh from scene
             const tankData = {
               position: e.mesh.position.clone(),
@@ -184,9 +188,13 @@ export class CollisionSystem {
       const dist = p.mesh.position.distanceTo(player.mesh.position);
       if (dist < 2.5) {
         const hitPos = p.mesh.position.clone();
+        // Record damage dealt before applying it (health may clamp to 0)
+        const actualDamage = Math.min(p.damage, player.health);
+        if (p.ownerTank) p.ownerTank.recordDamage(actualDamage);
         player.takeDamage(p.damage);
         this.projectiles.remove(i);
         if (player.health <= 0) {
+          if (p.ownerTank) p.ownerTank.recordKill();
           const tankData = {
             position: player.mesh.position.clone(),
             rotationY: player.mesh.rotation.y,

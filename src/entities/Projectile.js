@@ -13,8 +13,18 @@ const ENEMY_MAT = new THREE.MeshStandardMaterial({
 });
 
 export class Projectile {
-  constructor({ position, direction, isPlayerOwned, speed = 50, damage = 25 }) {
+  /**
+   * @param {object} opts
+   * @param {import('three').Vector3} opts.position
+   * @param {import('three').Vector3} opts.direction
+   * @param {boolean} opts.isPlayerOwned
+   * @param {number} [opts.speed=50]
+   * @param {number} [opts.damage=25]
+   * @param {import('./Tank.js').Tank|null} [opts.ownerTank=null] — tank that fired this shell (for kill/damage attribution)
+   */
+  constructor({ position, direction, isPlayerOwned, speed = 50, damage = 25, ownerTank = null }) {
     this.isPlayerOwned = isPlayerOwned;
+    this.ownerTank = ownerTank;
     this.speed = speed;
     this.damage = damage;
     this.lifetime = 3; // seconds

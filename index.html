@@ -372,6 +372,159 @@
     @media (pointer: fine) {
       #touch-controls { display: none; }
     }
+
+    /* === Scoreboard overlay (t013) === */
+    .sb-overlay {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 0, 0, 0.72);
+      z-index: 50;
+      pointer-events: none;
+    }
+
+    .sb-hidden {
+      display: none;
+    }
+
+    .sb-panel {
+      background: rgba(10, 14, 20, 0.95);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 10px;
+      padding: 20px 28px;
+      min-width: 680px;
+      max-width: 92vw;
+    }
+
+    .sb-title {
+      text-align: center;
+      color: #fff;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      margin-bottom: 16px;
+      opacity: 0.9;
+    }
+
+    .sb-columns {
+      display: flex;
+      gap: 0;
+      align-items: flex-start;
+    }
+
+    .sb-team-block {
+      flex: 1;
+    }
+
+    .sb-divider {
+      width: 1px;
+      background: rgba(255, 255, 255, 0.12);
+      align-self: stretch;
+      margin: 0 18px;
+    }
+
+    .sb-team-header {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .sb-green { color: #4caf50; }
+    .sb-red   { color: #f44336; }
+
+    .sb-col-labels,
+    .sb-row {
+      display: grid;
+      grid-template-columns: 72px 1fr 48px 64px 56px;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+    }
+
+    .sb-col-labels {
+      color: rgba(255, 255, 255, 0.4);
+      font-size: 10px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+
+    .sb-row {
+      color: #fff;
+      padding: 5px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .sb-row-dead {
+      opacity: 0.4;
+    }
+
+    /* HP bar */
+    .sb-col-hp {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .sb-hp-bar-outer {
+      flex: 1;
+      height: 8px;
+      background: rgba(255, 255, 255, 0.12);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .sb-hp-bar-inner {
+      display: block;
+      height: 100%;
+      border-radius: 4px;
+      transition: width 0.1s, background 0.1s;
+    }
+
+    .sb-hp-num {
+      width: 26px;
+      text-align: right;
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.7);
+    }
+
+    /* Status badge */
+    .sb-status-alive {
+      color: #4caf50;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 1px;
+    }
+
+    .sb-status-dead {
+      color: #f44336;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 1px;
+    }
+
+    .sb-hint {
+      text-align: center;
+      color: rgba(255, 255, 255, 0.3);
+      font-size: 10px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      margin-top: 14px;
+    }
+
+    @media (max-width: 720px) {
+      .sb-panel { min-width: 0; padding: 14px 12px; }
+      .sb-col-labels,
+      .sb-row { grid-template-columns: 56px 1fr 36px 52px 44px; font-size: 11px; gap: 4px; }
+      .sb-divider { margin: 0 10px; }
+    }
   </style>
 </head>
 <body>
@@ -410,7 +563,7 @@
   <div id="kill-feed"></div>
 
   <!-- Desktop hint -->
-  <div id="desktop-hint">WASD to move &middot; Mouse to aim &middot; Click to fire</div>
+  <div id="desktop-hint">WASD to move &middot; Mouse to aim &middot; Click to fire &middot; Tab = Scoreboard</div>
 
   <!-- PRE_ROUND: countdown before each round -->
   <div id="pre-round-overlay" class="match-overlay">
