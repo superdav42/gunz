@@ -5,6 +5,8 @@
  *  1. Projectile-vs-tank collisions (player ↔ enemy, bidirectional).
  *  2. Tank-vs-obstacle blocking: pushes tanks out of rocks/trees registered
  *     in Terrain.obstacles so they cannot pass through scenery.
+ *  3. Projectile-vs-tree collisions: tree entities take shell damage and are
+ *     removed from the scene + obstacle list when HP reaches zero.
  *
  * Callbacks (set before first update):
  *  onScoreAdd(points)      — called when an enemy tank is destroyed
@@ -12,6 +14,8 @@
  *  onHit(position, owner)  — called on every non-lethal shell impact
  *  onKill(position, owner) — called when a shell destroys a tank
  *    owner: 'player' (player shell hit enemy) | 'enemy' (enemy shell hit player)
+ *  onTreeHit(position, tree)    — called on every non-lethal shell hit on a tree
+ *  onTreeDestroy(position, tree) — called when a tree is destroyed by shells
  */
 export class CollisionSystem {
   /**
@@ -31,6 +35,8 @@ export class CollisionSystem {
     this._onPlayerDeath = null;
     this._onHit = null;
     this._onKill = null;
+    this._onTreeHit = null;
+    this._onTreeDestroy = null;
 
     /**
      * Approximate half-width of a tank hull for obstacle push-back.
@@ -38,6 +44,19 @@ export class CollisionSystem {
      * comfortable collision without feeling too generous.
      */
     this._tankRadius = 2.2;
+
+    /**
+     * Maximum height above tree base for shell-vs-tree detection.
+     * Trunk (2u) + canopy (4u) = 6u total; add 1u buffer.
+     */
+    this._treeHitHeight = 7;
+
+    /**
+     * XZ hit radius for shell-vs-tree. Canopy base radius is 1.5; adding 0.5
+     * for the shell's own width gives a comfortable but not overly-generous
+     * hit zone.
+     */
+    this._treeHitRadius = 2.0;
   }
 
   /** @param {(points: number) => void} cb */
@@ -65,6 +84,22 @@ export class CollisionSystem {
    */
   onKill(cb) {
     this._onKill = cb;
+    return this;
+  }
+
+  /**
+   * @param {(position: import('three').Vector3, tree: object) => void} cb
+   */
+  onTreeHit(cb) {
+    this._onTreeHit = cb;
+    return this;
+  }
+
+  /**
+   * @param {(position: import('three').Vector3, tree: object) => void} cb
+   */
+  onTreeDestroy(cb) {
+    this._onTreeDestroy = cb;
     return this;
   }
 
@@ -121,6 +156,61 @@ export class CollisionSystem {
           if (this._onKill) this._onKill(hitPos, 'enemy');
           if (this._onPlayerDeath) this._onPlayerDeath();
         }
+      }
+    }
+
+    // All projectiles (player and enemy) vs destructible trees
+    this._checkProjectileTreeCollisions();
+  }
+
+  /**
+   * Check every active projectile against every live tree.
+   * Uses a 2D XZ distance check combined with a vertical bounds check so
+   * shells that fly over a fallen-area don't trigger phantom tree hits.
+   *
+   * Trees are only registered in terrain.trees — once removed, the loop
+   * naturally skips them.
+   */
+  _checkProjectileTreeCollisions() {
+    const trees = this.terrain.trees;
+    if (!trees || trees.length === 0) return;
+
+    const projectiles = this.projectiles.active;
+    const hitRadius = this._treeHitRadius;
+    const maxHeight = this._treeHitHeight;
+
+    for (let i = projectiles.length - 1; i >= 0; i--) {
+      const p = projectiles[i];
+      const px = p.mesh.position.x;
+      const py = p.mesh.position.y;
+      const pz = p.mesh.position.z;
+
+      for (let j = trees.length - 1; j >= 0; j--) {
+        const tree = trees[j];
+
+        // Fast XZ distance check
+        const dx = px - tree.x;
+        const dz = pz - tree.z;
+        if (dx * dx + dz * dz >= hitRadius * hitRadius) continue;
+
+        // Vertical bounds: projectile must be within the tree column
+        const relY = py - tree.baseY;
+        if (relY < -1 || relY > maxHeight) continue;
+
+        // Hit confirmed
+        const hitPos = p.mesh.position.clone();
+        tree.hp -= p.damage;
+        this.projectiles.remove(i);
+
+        if (tree.hp <= 0) {
+          // Tree destroyed — remove from terrain (obstacles + trees arrays)
+          this.terrain.removeTree(tree);
+          if (this._onTreeDestroy) this._onTreeDestroy(hitPos, tree);
+        } else {
+          if (this._onTreeHit) this._onTreeHit(hitPos, tree);
+        }
+
+        break; // projectile consumed
       }
     }
   }

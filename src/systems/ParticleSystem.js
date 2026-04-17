@@ -227,6 +227,77 @@ export class ParticleSystem {
     }
   }
 
+  /**
+   * Emit debris when a tree is destroyed by a shell.
+   * Spawns two batches:
+   *   - Wood splinters (dark brown) that tumble outward with gravity
+   *   - Leaf fragments (green) that drift upward and fade slowly
+   *
+   * @param {THREE.Vector3} position  World-space position of the destroyed tree.
+   */
+  emitTreeDebris(position) {
+    // Wood splinter burst
+    const woodCount = 18;
+    for (let i = 0; i < woodCount; i++) {
+      const p = this._acquire();
+      if (!p) break;
+
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.random() * Math.PI * 0.7; // mostly upward-outward
+      const spd = 4 + Math.random() * 7;
+
+      p.velocity.set(
+        Math.sin(phi) * Math.cos(theta) * spd,
+        Math.abs(Math.cos(phi)) * spd + 1.5,
+        Math.sin(phi) * Math.sin(theta) * spd
+      );
+
+      p.position.copy(position).add({ x: 0, y: 1.5, z: 0 }); // mid-trunk height
+      p.life = 0.6 + Math.random() * 0.5;
+      p.maxLife = p.life;
+      p.gravity = 9;
+      p.colorStart.setHex(0x5c3a1e); // wood brown
+      p.colorEnd.setHex(0x3d2510);
+      p.startScale = 0.2 + Math.random() * 0.25;
+
+      p.mesh.material.color.copy(p.colorStart);
+      p.mesh.material.opacity = 1;
+      p.mesh.scale.setScalar(p.startScale);
+      p.mesh.position.copy(p.position);
+    }
+
+    // Leaf fragment drift
+    const leafCount = 14;
+    for (let i = 0; i < leafCount; i++) {
+      const p = this._acquire();
+      if (!p) break;
+
+      p.velocity.set(
+        (Math.random() - 0.5) * 5,
+        2 + Math.random() * 3,
+        (Math.random() - 0.5) * 5
+      );
+
+      // Spawn at canopy height (base + 4 units)
+      p.position.copy(position).add({
+        x: (Math.random() - 0.5) * 2,
+        y: 4 + Math.random() * 2,
+        z: (Math.random() - 0.5) * 2,
+      });
+      p.life = 0.9 + Math.random() * 0.6;
+      p.maxLife = p.life;
+      p.gravity = 2;
+      p.colorStart.setHex(0x2d5a27); // canopy green
+      p.colorEnd.setHex(0x4a7a3b);
+      p.startScale = 0.15 + Math.random() * 0.2;
+
+      p.mesh.material.color.copy(p.colorStart);
+      p.mesh.material.opacity = 0.9;
+      p.mesh.scale.setScalar(p.startScale);
+      p.mesh.position.copy(p.position);
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Per-frame update
   // -------------------------------------------------------------------------

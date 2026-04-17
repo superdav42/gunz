@@ -117,6 +117,14 @@ export class Game {
       })
       .onKill((pos) => {
         this.particles.emitExplosion(pos, { count: 35, speed: 10 });
+      })
+      .onTreeHit((pos) => {
+        // Small impact burst to show the tree was hit
+        this.particles.emitExplosion(pos, { count: 8, speed: 4, lifetime: 0.4 });
+      })
+      .onTreeDestroy((pos) => {
+        // Full debris burst when tree is felled
+        this.particles.emitTreeDebris(pos);
       });
 
     // Notify on team elimination (will be consumed by MatchManager in t008)

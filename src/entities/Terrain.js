@@ -4,7 +4,10 @@ export class Terrain {
   constructor() {
     this.size = 200;
     this.segments = 80;
-    /** Collidable props: each entry is { x, z, radius } in world space. */
+    /**
+     * Collidable rock props: each entry is { x, z, radius } in world space.
+     * Trees are NOT listed here — they are managed by TreeSystem.
+     */
     this.obstacles = [];
 
     const geo = new THREE.PlaneGeometry(
@@ -53,7 +56,8 @@ export class Terrain {
   }
 
   _addProps() {
-    // Scattered rocks
+    // Scattered rocks — registered as permanent collision obstacles.
+    // Trees are spawned separately by TreeSystem (see src/systems/TreeSystem.js).
     const rockGeo = new THREE.DodecahedronGeometry(1, 0);
     const rockMat = new THREE.MeshStandardMaterial({
       color: 0x888888,
@@ -78,39 +82,6 @@ export class Terrain {
       this.mesh.add(rock);
       // Register for collision — dodecahedron circumradius ≈ 1 world unit * scale
       this.obstacles.push({ x, z, radius: scale * 1.0 });
-    }
-
-    // Simple trees (cylinder trunk + cone canopy)
-    const trunkGeo = new THREE.CylinderGeometry(0.2, 0.3, 2, 6);
-    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x5c3a1e });
-    const canopyGeo = new THREE.ConeGeometry(1.5, 4, 6);
-    const canopyMat = new THREE.MeshStandardMaterial({
-      color: 0x2d5a27,
-      flatShading: true,
-    });
-
-    for (let i = 0; i < 30; i++) {
-      const tree = new THREE.Group();
-      const x = (Math.random() - 0.5) * 170;
-      const z = (Math.random() - 0.5) * 170;
-
-      // Don't place trees too close to spawn
-      if (Math.abs(x) < 15 && Math.abs(z) < 15) continue;
-
-      const trunk = new THREE.Mesh(trunkGeo, trunkMat);
-      trunk.position.y = 1;
-      trunk.castShadow = true;
-      tree.add(trunk);
-
-      const canopy = new THREE.Mesh(canopyGeo, canopyMat);
-      canopy.position.y = 4;
-      canopy.castShadow = true;
-      tree.add(canopy);
-
-      tree.position.set(x, this._heightFn(x, z), z);
-      this.mesh.add(tree);
-      // Register for collision — canopy ConeGeometry base radius = 1.5
-      this.obstacles.push({ x, z, radius: 1.5 });
     }
   }
 }
