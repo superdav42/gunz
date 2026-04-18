@@ -15,7 +15,17 @@ import { Tank } from '../entities/Tank.js';
  *   Each slot is an object { tank, alive }.
  *   Call killTank(tank) when a tank is destroyed; it sets alive=false and
  *   removes the mesh from the scene.
- *   isTeamEliminated(teamId) returns true when all 6 slots are dead.
+ *   isTeamEliminated(teamId) returns true when all tank slots AND all
+ *   registered soldiers on that team are dead.
+ *
+ * Soldier tracking (t029):
+ *   When a tank occupant bails out as a Soldier, register the Soldier via
+ *   registerSoldier(soldier, teamId) so the round-end check waits for the
+ *   soldier to die before declaring the team eliminated.
+ *   Call killSoldier(soldier) when a soldier's HP reaches 0.
+ *   Call unregisterSoldier(soldier) when a soldier re-enters a tank (alive
+ *   but no longer a free agent — removes from tracking without triggering
+ *   the elimination check).
  *
  * Integration with EnemySystem / CollisionSystem:
  *   Use getEnemyTanks() to get the live enemy Tank instances so existing
@@ -51,6 +61,14 @@ export class TeamManager {
     this.teams = [];
 
     this._onTeamEliminatedCb = null;
+
+    /**
+     * Soldier tracking for round-end logic (t029).
+     * Maps each active Soldier instance to its { teamId, alive } state.
+     * Populated via registerSoldier() when a combatant bails out of a tank.
+     * @type {Map<import('../entities/Soldier.js').Soldier, {teamId: number, alive: boolean}>}
+     */
+    this._soldiers = new Map();
 
     this._buildTeams();
   }
@@ -121,14 +139,75 @@ export class TeamManager {
   }
 
   /**
-   * Returns true if every tank on the given team is dead.
+   * Returns true when every tank slot AND every registered soldier on the
+   * given team is dead.  A live soldier keeps the team in the fight even
+   * after all tanks are destroyed.
    * @param {number} teamId — 0 or 1
    * @returns {boolean}
    */
   isTeamEliminated(teamId) {
     const team = this.teams[teamId];
     if (!team) return false;
-    return team.slots.every(slot => !slot.alive);
+    if (!team.slots.every(slot => !slot.alive)) return false;
+    // Check registered soldiers — any live soldier keeps the team alive.
+    for (const [, entry] of this._soldiers) {
+      if (entry.teamId === teamId && entry.alive) return false;
+    }
+    return true;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Soldier tracking (t029)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Register a live Soldier so the round-end check waits for it to die.
+   * Call this immediately after spawning a soldier from a bailed-out tank,
+   * BEFORE calling killTank() for that tank, to prevent a false early
+   * team-elimination signal.
+   *
+   * @param {import('../entities/Soldier.js').Soldier} soldier
+   * @param {number} teamId — 0 or 1
+   */
+  registerSoldier(soldier, teamId) {
+    this._soldiers.set(soldier, { teamId, alive: true });
+  }
+
+  /**
+   * Mark a soldier as dead.  Removes their mesh from the scene if still
+   * attached, then checks whether the team is now fully eliminated.
+   *
+   * @param {import('../entities/Soldier.js').Soldier} soldier
+   * @returns {boolean} true if the soldier was found and marked dead.
+   */
+  killSoldier(soldier) {
+    const entry = this._soldiers.get(soldier);
+    if (!entry || !entry.alive) return false;
+
+    entry.alive = false;
+
+    // Remove mesh from scene if it hasn't already been removed.
+    if (soldier.mesh && soldier.mesh.parent) {
+      this.scene.remove(soldier.mesh);
+    }
+
+    if (this.isTeamEliminated(entry.teamId) && this._onTeamEliminatedCb) {
+      this._onTeamEliminatedCb(entry.teamId);
+    }
+
+    return true;
+  }
+
+  /**
+   * Remove a soldier from tracking without killing them.
+   * Use this when a soldier re-enters a tank (alive, just no longer a
+   * free combatant).  Does NOT trigger the elimination check.
+   *
+   * @param {import('../entities/Soldier.js').Soldier} soldier
+   * @returns {boolean} true if the soldier was found and removed.
+   */
+  unregisterSoldier(soldier) {
+    return this._soldiers.delete(soldier);
   }
 
   /**
@@ -153,9 +232,15 @@ export class TeamManager {
 
   /**
    * Reset both teams to full health, restore meshes to scene, reposition.
+   * Also clears all registered soldiers — PlayerController.reset() removes
+   * the soldier mesh; this ensures the tracking map starts clean.
    * Called by MatchManager/round reset (t009).
    */
   reset() {
+    // Clear soldier tracking before restoring tank slots so no stale entries
+    // prevent the first-round elimination check from working correctly.
+    this._soldiers.clear();
+
     for (const team of this.teams) {
       const isPlayerTeam = team.id === 0;
       for (let i = 0; i < team.slots.length; i++) {
