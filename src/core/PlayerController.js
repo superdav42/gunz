@@ -69,6 +69,14 @@ export class PlayerController {
      * @private @type {((soldier: import('../entities/Soldier.js').Soldier) => void) | null}
      */
     this._onSoldierReenteredCb = null;
+
+    /**
+     * Gun weapon id to equip on the soldier when spawned (t031).
+     * Set from the loadout selection (Game.js) before any soldier is created.
+     * Defaults to the starter pistol so a soldier always has a working gun.
+     * @type {string}
+     */
+    this.soldierGunId = 'pistol';
   }
 
   // ---------------------------------------------------------------------------
@@ -95,11 +103,15 @@ export class PlayerController {
 
   /**
    * Current ammo shown in the HUD.
-   * null when on foot — soldiers have effectively unlimited ammo (no clip mechanic yet).
-   * @returns {number|null}
+   *   Tank mode    — returns tank.ammo (a number).
+   *   Soldier mode — returns a formatted string: "12/30", "0/30", or "RELOAD".
+   * @returns {number|string|null}
    */
   get ammo() {
-    return this.mode === 'tank' ? this.tank.ammo : null;
+    if (this.mode === 'tank') return this.tank.ammo;
+    if (!this.soldier) return null;
+    if (this.soldier.isReloading) return 'RELOAD';
+    return `${this.soldier.clipCurrent}/${this.soldier._gunClipSize}`;
   }
 
   // ---------------------------------------------------------------------------
@@ -244,10 +256,10 @@ export class PlayerController {
    *
    * @param {object} input — snapshot from InputSystem.getState()
    * @param {number} dt    — seconds since last frame
-   * @returns {{ newProjectile: import('../entities/Projectile.js').Projectile|null,
+   * @returns {{ newProjectiles: import('../entities/Projectile.js').Projectile[],
    *             isMoving: boolean }}
-   *   newProjectile — projectile to add to ProjectileSystem (null if none fired).
-   *   isMoving      — true if the active entity moved this frame (for dust trails).
+   *   newProjectiles — projectiles to add to ProjectileSystem (empty array if none fired).
+   *   isMoving       — true if the active entity moved this frame (for dust trails).
    */
   update(input, dt) {
     if (this.mode === 'tank') {
@@ -289,12 +301,13 @@ export class PlayerController {
       this.exitTank();
     }
 
-    let newProjectile = null;
+    const newProjectiles = [];
     if (input.fire && tank.canFire()) {
-      newProjectile = tank.fire();
+      const proj = tank.fire();
+      if (proj) newProjectiles.push(proj);
     }
 
-    return { newProjectile, isMoving: moving };
+    return { newProjectiles, isMoving: moving };
   }
 
   // ---------------------------------------------------------------------------
@@ -326,12 +339,19 @@ export class PlayerController {
       this.tryEnterTank();
     }
 
-    let newProjectile = null;
-    if (input.fire && soldier.canFire()) {
-      newProjectile = soldier.fire();
+    // R key — manual reload when clip is not full and not already reloading
+    if (input.reload) {
+      soldier.startReload();
     }
 
-    return { newProjectile, isMoving: moving };
+    // Fire: pass isMoving for sniper accuracy penalty (t031).
+    // soldier.fire() always returns an array (empty if on cooldown / reloading).
+    let newProjectiles = [];
+    if (input.fire && soldier.canFire()) {
+      newProjectiles = soldier.fire(moving);
+    }
+
+    return { newProjectiles, isMoving: moving };
   }
 
   // ---------------------------------------------------------------------------
@@ -340,6 +360,7 @@ export class PlayerController {
 
   /**
    * Instantiate and place a Soldier at the given world position.
+   * Equips the soldier with the gun from `this.soldierGunId` (set from loadout).
    * @private
    * @param {THREE.Vector3} pos
    * @param {number}        rotY — initial world-space Y rotation (radians)
@@ -349,6 +370,8 @@ export class PlayerController {
     this.soldier = new Soldier({ isPlayer: true, teamId: 0, name: 'Player' });
     this.soldier.mesh.position.set(pos.x, y, pos.z);
     this.soldier.mesh.rotation.y = rotY;
+    // Apply the loadout gun selection (t031) — defaults to pistol if not set.
+    this.soldier.setGunWeapon(this.soldierGunId);
     this.scene.add(this.soldier.mesh);
 
     // Notify Game.js so TeamManager can register the soldier before any

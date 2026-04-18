@@ -304,15 +304,145 @@ export class CollisionSystem {
 
         const destroyed = tree.takeDamage(p.damage);
 
+        // Explosive projectiles hitting a tree also trigger splash damage. (t032)
+        if (p.splashRadius > 0) {
+          this._applySplashToEnemies(p, hitPos, null);
+          this._applySplashToPlayer(p, hitPos, null);
+          if (this._onExplosion) this._onExplosion(hitPos, p.splashRadius);
+        }
+
         if (destroyed) {
           // treeSystem.destroyTree emits wood debris particles
           if (this._onTreeDestroy) this._onTreeDestroy(hitPos);
-        } else {
+        } else if (!p.splashRadius) {
           if (this._onTreeHit) this._onTreeHit(hitPos);
         }
 
         break; // projectile consumed; skip remaining trees
       }
+    }
+  }
+
+  /**
+   * Explosive projectiles (splashRadius > 0) that descend to terrain level
+   * detonate on ground contact. (t032)
+   *
+   * This handles grenades that arc past all tanks and land on the field, or
+   * rockets that fly wide. The impact radius acts as an AoE even with no
+   * direct hit.
+   *
+   * Ground detection: projectile Y ≤ terrain height + small clearance (0.4 u).
+   * Uses the terrain already owned by this system — no extra references needed.
+   */
+  _checkExplosiveTerrain() {
+    const projectiles = this.projectiles.active;
+
+    for (let i = projectiles.length - 1; i >= 0; i--) {
+      const p = projectiles[i];
+      if (!p.isExplosive || !p.splashRadius) continue;
+
+      const px = p.mesh.position.x;
+      const py = p.mesh.position.y;
+      const pz = p.mesh.position.z;
+      const groundY = this.terrain.getHeightAt(px, pz);
+
+      if (py > groundY + 0.4) continue; // still in flight
+
+      // Detonate
+      const hitPos = p.mesh.position.clone();
+      this.projectiles.remove(i);
+
+      this._applySplashToEnemies(p, hitPos, null);
+      this._applySplashToPlayer(p, hitPos, null);
+
+      if (this._onExplosion) this._onExplosion(hitPos, p.splashRadius);
+    }
+  }
+
+  /**
+   * Apply splash (area) damage from an explosive projectile to all enemy tanks
+   * within `p.splashRadius`. Linear damage falloff: 100% at range 0, 0% at edge.
+   *
+   * Any enemy killed by splash triggers the full kill-callback chain so rewards,
+   * kill feed, and TeamManager state stay consistent.
+   *
+   * @param {import('../entities/Projectile.js').Projectile} p           — exploding projectile
+   * @param {import('three').Vector3}                        hitPos      — detonation position
+   * @param {object|null}                                    excludeTank — direct-hit target to skip
+   *   (already took direct damage; exclude to avoid double-applying)
+   */
+  _applySplashToEnemies(p, hitPos, excludeTank) {
+    if (!p.isPlayerOwned) return; // enemy explosives don't splash enemies
+    const radius = p.splashRadius;
+
+    // Collect enemies in range first, then process kills after iteration.
+    const inRange = [];
+    for (const e of this.enemies.active) {
+      if (e === excludeTank || e.health <= 0) continue;
+      const dist = hitPos.distanceTo(e.mesh.position);
+      if (dist >= radius) continue;
+
+      const falloff   = 1 - dist / radius;
+      const rawDmg    = p.damage * falloff;
+      const cappedDmg = Math.min(rawDmg, e.health);
+
+      if (this._onDamageDealt) this._onDamageDealt(e, cappedDmg);
+      if (p.ownerTank) p.ownerTank.recordDamage(cappedDmg);
+      e.takeDamage(rawDmg);
+
+      if (e.health <= 0) {
+        inRange.push(e);
+      }
+    }
+
+    // Process splash kills: find current index by reference (list may have shrunk).
+    for (const killed of inRange) {
+      if (p.ownerTank) p.ownerTank.recordKill();
+      const tankData = {
+        position:  killed.mesh.position.clone(),
+        rotationY: killed.mesh.rotation.y,
+      };
+      if (this._onKillFeed) this._onKillFeed(this.player.name || 'Player', killed.name || 'Enemy');
+      if (this._onTankKilled) this._onTankKilled(killed, true);
+      const idx = this.enemies.active.indexOf(killed);
+      if (idx !== -1) this.enemies.remove(idx);
+      if (this._onKill) this._onKill(hitPos, 'player', tankData);
+      if (this._onScoreAdd) this._onScoreAdd(100);
+    }
+  }
+
+  /**
+   * Apply splash (area) damage from an enemy explosive to the player tank.
+   *
+   * @param {import('../entities/Projectile.js').Projectile} p           — exploding projectile
+   * @param {import('three').Vector3}                        hitPos      — detonation position
+   * @param {object|null}                                    excludeTank — direct-hit target to skip
+   */
+  _applySplashToPlayer(p, hitPos, excludeTank) {
+    if (p.isPlayerOwned) return; // player explosives don't splash the player
+    const player = this.player;
+    if (player === excludeTank || player.health <= 0) return;
+
+    const radius = p.splashRadius;
+    const dist   = hitPos.distanceTo(player.mesh.position);
+    if (dist >= radius) return;
+
+    const falloff   = 1 - dist / radius;
+    const rawDmg    = p.damage * falloff;
+    const cappedDmg = Math.min(rawDmg, player.health);
+
+    if (p.ownerTank) p.ownerTank.recordDamage(cappedDmg);
+    player.takeDamage(rawDmg);
+
+    if (player.health <= 0) {
+      if (p.ownerTank) p.ownerTank.recordKill();
+      const tankData = {
+        position:  player.mesh.position.clone(),
+        rotationY: player.mesh.rotation.y,
+      };
+      if (this._onKillFeed) this._onKillFeed('Enemy', player.name || 'Player');
+      if (this._onKill) this._onKill(hitPos, 'enemy', tankData);
+      if (this._onPlayerDeath) this._onPlayerDeath();
     }
   }
 
