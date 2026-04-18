@@ -23,6 +23,9 @@ import { SaveSystem } from '../systems/SaveSystem.js';
 import { LeagueSystem } from '../systems/LeagueSystem.js';
 import { LeagueDisplay } from '../ui/LeagueDisplay.js';
 import { getLeagueDef } from '../data/LeagueDefs.js';
+import { AbilitySystem } from '../systems/AbilitySystem.js';
+import { getTankDef } from '../data/TankDefs.js';
+import { GunDefs, MeleeDefs } from '../data/WeaponDefs.js';
 
 export class Game {
   constructor(canvas) {
@@ -252,6 +255,8 @@ export class Game {
         this.aiController.reset();
         // Reset PlayerController to tank mode (removes any active soldier mesh).
         this.playerController.reset();
+        // Reset ability cooldowns so both slots are ready at round start (t042).
+        this.abilitySystem.reset();
         this._playerDustTimer = 0;
         this._enemyDustTimer = 0;
       })
@@ -319,6 +324,10 @@ export class Game {
     // round resets because Tank.reset() restores health to the (already-scaled) maxHealth.
     this.aiController.applyLeagueScalingToTeam(1, 0);
 
+    // AbilitySystem: cooldown-based Q-key ability framework (t042).
+    // Slots are configured from the player's loadout when a match starts.
+    this.abilitySystem = new AbilitySystem();
+
     this.hud = new HUD();
     this.killFeed = new KillFeed();
     this.scoreboard = new Scoreboard(this.teams);
@@ -356,6 +365,8 @@ export class Game {
       );
       // Apply on-foot gun selection so soldiers spawn with the chosen weapon (t031).
       this.playerController.soldierGunId = selection.gun;
+      // Configure AbilitySystem slots from the chosen loadout (t042).
+      this._applyLoadoutToAbilitySystem(selection);
       this._startImmediately();
     });
   }
@@ -410,6 +421,9 @@ export class Game {
           this.particles.emitDust(tank.mesh.position);
         }
       }
+
+      // AbilitySystem: advance cooldown timers (t042).
+      this.abilitySystem.update(dt);
 
       // StatsTracker: advance survival timer only during active round
       this.stats.update(dt);
@@ -483,6 +497,35 @@ export class Game {
         } else {
           // Small impact burst for a non-lethal melee hit.
           this.particles.emitExplosion(hitPos, { count: 8, speed: 4, lifetime: 0.3 });
+        }
+      }
+    }
+
+    // ---- Ability activation — Q key (t042) ----
+    // Tank mode  → try tank ability slot.
+    // Soldier mode → try weapon ability slot.
+    // Actual gameplay effects are implemented by t043 (tank) and t044 (weapon);
+    // for now the activation is logged so the framework is verifiable end-to-end.
+    if (input.ability) {
+      if (this.playerController.mode === 'tank') {
+        const activated = this.abilitySystem.tryActivateTankAbility();
+        if (activated) {
+          // Placeholder VFX: emit a burst at the tank's position.
+          // t043 will replace this with the real ability effect.
+          this.particles.emitExplosion(
+            this.player.mesh.position.clone(),
+            { count: 20, speed: 8, lifetime: 0.8 }
+          );
+        }
+      } else if (this.playerController.soldier) {
+        const activated = this.abilitySystem.tryActivateWeaponAbility();
+        if (activated) {
+          // Placeholder VFX: emit a burst at the soldier's position.
+          // t044 will replace this with the real weapon ability effect.
+          this.particles.emitExplosion(
+            this.playerController.soldier.mesh.position.clone(),
+            { count: 15, speed: 6, lifetime: 0.6 }
+          );
         }
       }
     }
@@ -624,6 +667,8 @@ export class Game {
       );
       // Apply on-foot gun selection so soldiers spawn with the chosen weapon (t031).
       this.playerController.soldierGunId = selection.gun;
+      // Reconfigure AbilitySystem for the new loadout (t042).
+      this._applyLoadoutToAbilitySystem(selection);
 
       this.score = 0;
       // Reset match state machine first (no team events should fire during reset)
@@ -645,6 +690,37 @@ export class Game {
 
       this._startImmediately();
     });
+  }
+
+  /**
+   * Configure AbilitySystem slots from the selected loadout (t042).
+   *
+   * Tank slot   — from TankDefs entry for the chosen tank class.
+   * Weapon slot — from the on-foot weapon that has an ability.  Gun ability
+   *               takes priority; if the gun has no ability the melee weapon
+   *               is checked as a fallback (e.g. Energy Blade → dashStrike).
+   *
+   * @param {{ tank: string, gun: string, melee: string }} selection
+   * @private
+   */
+  _applyLoadoutToAbilitySystem(selection) {
+    const tankDef  = getTankDef(selection.tank);
+    const gunDef   = GunDefs[selection.gun];
+    const meleeDef = MeleeDefs[selection.melee];
+
+    this.abilitySystem.setTankDef(tankDef);
+
+    // Prefer gun ability; fall back to melee ability if gun has none.
+    const weaponDef = (gunDef && gunDef.ability) ? gunDef : (meleeDef || gunDef);
+    if (weaponDef) {
+      this.abilitySystem.setWeaponDef(weaponDef);
+    }
+
+    console.info(
+      `[AbilitySystem] Loadout applied — ` +
+      `tank ability: ${tankDef.ability || 'none'}, ` +
+      `weapon ability: ${this.abilitySystem.weaponAbilityId || 'none'}`
+    );
   }
 
   _onResize() {

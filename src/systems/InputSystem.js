@@ -18,6 +18,8 @@ export class InputSystem {
     this._fireRequested   = false;
     this._meleeRequested  = false;
     this._reloadRequested = false;
+    /** One-shot: true on the frame Q is pressed (activate ability). */
+    this._abilityRequested = false;
     this._turretAngle = null;
     /** One-shot: true on the frame E is pressed (exit/enter vehicle). */
     this._exitVehicleRequested = false;
@@ -39,6 +41,8 @@ export class InputSystem {
       if (e.code === 'KeyF') this._meleeRequested = true;
       // R key — manual reload for on-foot gun (t030)
       if (e.code === 'KeyR') this._reloadRequested = true;
+      // Q key — activate ability (tank ability in tank mode, weapon ability in soldier mode)
+      if (e.code === 'KeyQ') this._abilityRequested = true;
       // Prevent Tab from shifting browser focus while held for the scoreboard
       if (e.code === 'Tab') e.preventDefault();
     });
@@ -161,6 +165,8 @@ export class InputSystem {
       melee: this._meleeRequested,
       /** One-shot: R key triggers a manual reload for the on-foot gun (t030). */
       reload: this._reloadRequested,
+      /** One-shot: Q key activates the context-appropriate ability slot (t042). */
+      ability: this._abilityRequested,
       turretAngle: this._turretAngle,
       /** true while Tab is held — shows/hides the scoreboard overlay */
       tabHeld: !!this._keys['Tab'],
@@ -172,6 +178,7 @@ export class InputSystem {
     this._fireRequested        = false;
     this._meleeRequested       = false;
     this._reloadRequested      = false;
+    this._abilityRequested     = false;
     this._exitVehicleRequested = false;
 
     return state;
