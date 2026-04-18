@@ -53,6 +53,22 @@ export class PlayerController {
      * @type {boolean}
      */
     this._tankIdle = false;
+
+    /**
+     * Fired whenever a new Soldier is spawned (voluntary exit or auto-bail).
+     * Receives the Soldier instance.  Game.js uses this to register the
+     * soldier with TeamManager so round-end checks account for it (t029).
+     * @private @type {((soldier: import('../entities/Soldier.js').Soldier) => void) | null}
+     */
+    this._onSoldierSpawnedCb = null;
+
+    /**
+     * Fired when a live Soldier re-enters the idle tank.
+     * Receives the Soldier instance before it is removed from the scene.
+     * Game.js uses this to unregister the soldier from TeamManager (t029).
+     * @private @type {((soldier: import('../entities/Soldier.js').Soldier) => void) | null}
+     */
+    this._onSoldierReenteredCb = null;
   }
 
   // ---------------------------------------------------------------------------
@@ -84,6 +100,35 @@ export class PlayerController {
    */
   get ammo() {
     return this.mode === 'tank' ? this.tank.ammo : null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Soldier lifecycle callbacks (t029)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Register a callback that fires whenever a new Soldier is spawned.
+   * Use this in Game.js to register the soldier with TeamManager so the
+   * round-end check waits for the soldier before declaring the team eliminated.
+   * @param {(soldier: import('../entities/Soldier.js').Soldier) => void} cb
+   * @returns {this}
+   */
+  onSoldierSpawned(cb) {
+    this._onSoldierSpawnedCb = cb;
+    return this;
+  }
+
+  /**
+   * Register a callback that fires when a live Soldier successfully re-enters
+   * the idle tank.  Receives the Soldier before its mesh is removed.
+   * Use this in Game.js to unregister the soldier from TeamManager (the
+   * soldier is alive — no elimination check should fire).
+   * @param {(soldier: import('../entities/Soldier.js').Soldier) => void} cb
+   * @returns {this}
+   */
+  onSoldierReentered(cb) {
+    this._onSoldierReenteredCb = cb;
+    return this;
   }
 
   // ---------------------------------------------------------------------------
@@ -144,6 +189,12 @@ export class PlayerController {
 
     const dist = this.soldier.mesh.position.distanceTo(this.tank.mesh.position);
     if (dist > RE_ENTER_DIST) return false;
+
+    // Notify Game.js so TeamManager can unregister the soldier (t029).
+    // Must fire before the soldier reference is cleared.
+    if (this._onSoldierReenteredCb) {
+      this._onSoldierReenteredCb(this.soldier);
+    }
 
     this.scene.remove(this.soldier.mesh);
     this.soldier = null;
@@ -299,5 +350,11 @@ export class PlayerController {
     this.soldier.mesh.position.set(pos.x, y, pos.z);
     this.soldier.mesh.rotation.y = rotY;
     this.scene.add(this.soldier.mesh);
+
+    // Notify Game.js so TeamManager can register the soldier before any
+    // subsequent killTank() call checks for team elimination (t029).
+    if (this._onSoldierSpawnedCb) {
+      this._onSoldierSpawnedCb(this.soldier);
+    }
   }
 }

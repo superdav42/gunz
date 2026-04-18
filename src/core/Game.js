@@ -95,6 +95,18 @@ export class Game {
       scene:   this.scene,
       terrain: this.terrain,
     });
+
+    // t029 — Register / unregister the player's soldier with TeamManager so the
+    // round-end check waits for the soldier before declaring the team eliminated.
+    // onSoldierSpawned fires from _spawnSoldierAt() (both voluntary exit and bail-out).
+    // onSoldierReentered fires from tryEnterTank() before the soldier is removed.
+    this.playerController
+      .onSoldierSpawned((soldier) => {
+        this.teams.registerSoldier(soldier, 0);
+      })
+      .onSoldierReentered((soldier) => {
+        this.teams.unregisterSoldier(soldier);
+      });
   }
 
   _initSystems() {
@@ -208,7 +220,13 @@ export class Game {
       })
       .onRoundEnd((roundWinnerId) => {
         // Finalise stats while team alive-state still reflects the round outcome.
-        const playerAlive = this.teams.teams[0].slots[0].alive;
+        // The player "survived" if their tank slot is still alive OR they are
+        // actively on foot as a soldier (t029: tank slot is now properly killed
+        // on tank destruction, so a live soldier counts as survival too).
+        const playerTankAlive   = this.teams.teams[0].slots[0].alive;
+        const playerSoldierAlive = this.playerController.mode === 'soldier' &&
+                                   this.playerController.soldier !== null;
+        const playerAlive = playerTankAlive || playerSoldierAlive;
         const result = this.stats.endRound(playerAlive);
         console.info(
           `[StatsTracker] Round ${this.match.roundNumber} ended — ` +
@@ -435,7 +453,7 @@ export class Game {
     const activeSoldier = this.playerController.soldier;
     if (activeSoldier && input.melee) {
       // Build the list of valid melee targets: all living enemy tanks.
-      // Living enemy soldiers are added here when t028/t029 introduce AI soldiers.
+      // Living enemy soldiers will be added here when t028 introduces AI soldiers.
       const meleeTargets = [...this.teams.getEnemyTanks()];
       const hits = activeSoldier.melee(meleeTargets);
       for (const { target, damage } of hits) {
@@ -469,12 +487,15 @@ export class Game {
    * Called by CollisionSystem when the player's tank HP reaches 0.
    *
    * If the player is still in the tank (tank mode):
-   *   - Remove tank mesh and spawn a wreck.
-   *   - Spawn a soldier at the tank's last position (auto-bail).
-   *   - Player slot stays alive in TeamManager until the soldier also dies.
+   *   - Remove tank mesh, spawn wreck.
+   *   - bailOut() spawns a soldier and fires onSoldierSpawned → registerSoldier.
+   *   - Then killTank() marks the player slot dead; isTeamEliminated() now sees
+   *     the live soldier and will NOT fire the team-eliminated callback yet.
    *
    * If the player already exited the tank voluntarily (soldier mode):
    *   - The idle tank was destroyed by enemies — remove it and spawn a wreck.
+   *   - killTank() marks the player's tank slot dead.  The soldier is already
+   *     registered so isTeamEliminated() still returns false while it lives.
    *   - Player continues on foot; re-entry is no longer possible.
    */
   _onPlayerTankDestroyed() {
@@ -482,37 +503,49 @@ export class Game {
     const tankPos  = this.player.mesh.position.clone();
     const tankRotY = this.player.mesh.rotation.y;
 
-    // Remove the tank mesh from the scene (kills its presence without
-    // calling TeamManager.killTank() so the player slot stays alive).
+    // Remove tank mesh from the scene and leave a wreck prop in its place.
+    // killTank() would also call scene.remove(); calling it first is safe
+    // because Three.js scene.remove() is idempotent.
     this.scene.remove(this.player.mesh);
-    // Spawn a wreck prop at the tank's last position.
     this.wrecks.add(tankPos, tankRotY);
 
     if (this.playerController.mode === 'soldier') {
-      // Player was already on foot — idle tank was destroyed by enemies.
-      // Update PlayerController state so re-entry prompt is hidden.
+      // Player was already on foot — idle tank destroyed by enemies.
+      // Update PlayerController so the re-entry prompt is hidden.
       this.playerController.notifyTankDestroyedWhileIdle();
+      // Mark the tank slot dead.  The soldier is already registered with
+      // TeamManager (registered when the player first exited), so
+      // isTeamEliminated(0) will return false while the soldier is alive.
+      this.teams.killTank(this.player);
       console.info('[Game] Idle player tank destroyed; player continues on foot.');
     } else {
       // Player was in the tank — auto-bail.
       this.stats.recordPlayerDeath();
+      // bailOut() spawns a Soldier and fires onSoldierSpawned → registerSoldier().
+      // Soldier must be registered BEFORE killTank() so isTeamEliminated() sees
+      // the live soldier and does not fire team elimination prematurely.
       this.playerController.bailOut(tankPos);
+      this.teams.killTank(this.player);
       console.info('[Game] Player tank destroyed — auto-bailed as soldier.');
     }
   }
 
   /**
    * Called when the player's on-foot soldier HP reaches 0.
-   * Removes the soldier from the scene, then finalises the player's
-   * slot as dead in TeamManager (triggering round-end if the team is wiped).
+   * Captures the soldier reference, emits death particles, clears the soldier
+   * from PlayerController, then calls TeamManager.killSoldier() which handles
+   * the final elimination check (t029).
    */
   _onPlayerSoldierDestroyed() {
-    const soldierPos = this.playerController.soldier.mesh.position.clone();
+    // Capture soldier before clearSoldier() nulls the reference.
+    const soldier    = this.playerController.soldier;
+    const soldierPos = soldier.mesh.position.clone();
     this.particles.emitExplosion(soldierPos, { count: 10, speed: 5, lifetime: 0.5 });
+    // Remove the soldier mesh from the scene via PlayerController.
     this.playerController.clearSoldier();
-
-    // Now mark the player's slot dead — this may trigger team elimination.
-    this.teams.killTank(this.player);
+    // killSoldier() marks the entry dead in TeamManager and checks whether
+    // the team is now fully eliminated (all tanks + all soldiers dead).
+    this.teams.killSoldier(soldier);
     console.info('[Game] Player soldier destroyed — player is out for this round.');
   }
 
