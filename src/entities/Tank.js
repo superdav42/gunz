@@ -1,10 +1,7 @@
 import * as THREE from 'three';
 import { Projectile } from './Projectile.js';
+import { getTankDef } from '../data/TankDefs.js';
 
-const TANK_COLORS = {
-  player: { body: 0x2d5a27, turret: 0x3a7a33 },
-  enemy: { body: 0x8b2500, turret: 0xb03000 },
-};
 
 /**
  * Per-class geometry parameters — distinct visual identity for each tank class.
@@ -100,7 +97,7 @@ export class Tank {
    * @param {number|null} [opts.turretColor=null]    — override turret color (hex int)
    * @param {number} [opts.teamId=1]                 — 0 = player team, 1 = enemy team
    * @param {string} [opts.name='']                  — display name shown in kill feed
-   * @param {string} [opts.tankClassId='standard']   — tank class key (controls mesh shape)
+   * @param {string} [opts.tankClassId='standard']   — tank class key (controls mesh shape + stats)
    */
   constructor({
     isPlayer = false,
@@ -116,17 +113,15 @@ export class Tank {
     this.name = name || (isPlayer ? 'Player' : 'Enemy');
 
     /**
-     * Tank class identifier — controls mesh geometry.
-     * Stats from the class definition are applied separately by t037.
-     * Falls back to 'standard' for any unknown id.
+     * Tank class identifier — controls mesh geometry and combat stats.
+     * Falls back to 'standard' for any unknown id so meshes never break.
      */
     this.tankClassId = CLASS_MESH_PARAMS[tankClassId] ? tankClassId : 'standard';
 
-    this.health = 100;
-    this.maxHealth = 100;
+    // Apply combat/movement stats from TankDefs for the resolved class (t037).
+    this._applyClassDef(this.tankClassId);
     this.ammo = 30;
     this.fireCooldown = 0;
-    this.fireRate = 0.3; // seconds between shots
 
     /**
      * Damage multiplier for projectiles fired by this tank.
@@ -141,10 +136,11 @@ export class Tank {
     this.kills = 0;
     this.damageDealt = 0;
 
-    const base = isPlayer ? TANK_COLORS.player : TANK_COLORS.enemy;
+    // Use class-defined colors as defaults; explicit overrides take priority.
+    // _applyClassDef() has already stored this.colorBody / this.colorTurret.
     const palette = {
-      body: color !== null ? color : base.body,
-      turret: turretColor !== null ? turretColor : (color !== null ? color : base.turret),
+      body:   color !== null        ? color        : this.colorBody,
+      turret: turretColor !== null  ? turretColor  : (color !== null ? color : this.colorTurret),
     };
 
     this.mesh = this._buildMesh(palette, this.tankClassId);
@@ -308,6 +304,76 @@ export class Tank {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Class system (t037)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Apply stats from a TankDefs entry.  Sets all per-class fields so that
+   * movement, fire rate, HP, armor, and damage all reflect the chosen class.
+   *
+   * Called once during construction (via tankClassId), and again when a
+   * loadout change re-assigns the player's tank class (applyClass).
+   *
+   * fireRate in TankDefs = shots per second → converted to seconds-per-shot
+   * cooldown here so Tank.update() can use the existing fireCooldown pattern.
+   *
+   * @param {string} classId — key in TankDefs (e.g. 'standard', 'heavy')
+   */
+  _applyClassDef(classId) {
+    const def = getTankDef(classId);
+    /** Base HP before any league multiplier — used by AIController.applyLeagueScalingToTeam(). */
+    this.baseHp     = def.hp;
+    this.maxHealth  = def.hp;
+    this.health     = def.hp;
+    /**
+     * Damage reduction fraction applied in takeDamage().
+     * 0 = no reduction, 0.3 = 30% reduction (Heavy class).
+     */
+    this.armor      = def.armor;
+    /** Forward movement speed in world-units/second (used by PlayerController + AIController). */
+    this.speed      = def.speed;
+    /** Hull rotation rate in radians/second (used by PlayerController + AIController). */
+    this.turnRate   = def.turnRate;
+    /** Base damage per shell (before damageMultiplier). */
+    this.damage     = def.damage;
+    /** Maximum effective range in world units (used by AIController for fire/aggro distance). */
+    this.range      = def.range;
+    /**
+     * Seconds between shots (fire cooldown duration).
+     * Derived from TankDefs.fireRate (shots/second): cooldown = 1 / fireRate.
+     */
+    this.fireRate   = 1 / def.fireRate;
+    /** Hull color from TankDefs (informational; explicit color overrides take priority). */
+    this.colorBody   = def.colorBody;
+    /** Turret color from TankDefs (informational; explicit turretColor overrides take priority). */
+    this.colorTurret = def.colorTurret;
+  }
+
+  /**
+   * Re-assign this tank to a different class and apply its stats.
+   *
+   * Call this when a loadout selection changes the player's tank class
+   * between matches.  Does NOT reset kills/damageDealt — those reset in reset().
+   * Also updates tankClassId so reset() restores the correct maxHealth.
+   *
+   * @param {string} classId — key in TankDefs
+   */
+  applyClass(classId) {
+    const resolved = CLASS_MESH_PARAMS[classId] ? classId : 'standard';
+    this.tankClassId = resolved;
+    this._applyClassDef(resolved);
+    // Use the new class's base HP as the starting point for the next match.
+    // League scaling (applyLeagueScalingToTeam) is only applied to enemy tanks,
+    // so the player's maxHealth stays at the base value.
+    this.maxHealth = this.baseHp;
+    this.health    = this.maxHealth;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Combat
+  // ---------------------------------------------------------------------------
+
   setTurretAngle(angle) {
     if (this.turret) {
       this.turret.rotation.y = angle - this.mesh.rotation.y;
@@ -337,12 +403,21 @@ export class Tank {
       isPlayerOwned: this.isPlayer,
       ownerTank: this,
       speed: 50,
-      damage: 25 * this.damageMultiplier,
+      damage: this.damage * this.damageMultiplier,
     });
   }
 
+  /**
+   * Apply incoming damage, reduced by this tank's armor fraction.
+   *
+   * @param {number} amount — raw incoming damage (before armor reduction)
+   * @returns {number} — actual HP removed (post-armor, clamped to remaining HP)
+   */
   takeDamage(amount) {
-    this.health = Math.max(0, this.health - amount);
+    const reduced = amount * (1 - this.armor);
+    const actual  = Math.min(reduced, this.health);
+    this.health   = Math.max(0, this.health - reduced);
+    return actual;
   }
 
   /**
@@ -375,8 +450,8 @@ export class Tank {
     this.kills = 0;
     this.damageDealt = 0;
     // Reset turret to face forward (local rotation.y = 0).
-    // Loadout properties (tank class, weapons, upgrades — added in future tasks)
-    // are intentionally NOT reset here — they persist across rounds per VISION.md.
+    // Class stats (speed, armor, damage, etc.) and league-scaled maxHealth are
+    // intentionally NOT reset here — they persist across rounds per VISION.md.
     if (this.turret) {
       this.turret.rotation.y = 0;
     }

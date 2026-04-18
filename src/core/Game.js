@@ -363,6 +363,10 @@ export class Game {
         `[Game] Loadout selected — tank:${selection.tank} ` +
         `gun:${selection.gun} melee:${selection.melee}`
       );
+      // Apply selected tank class stats to the player tank (t037).
+      // applyClass re-reads TankDefs[selection.tank] so HP, speed, armor, etc.
+      // all reflect the chosen class before the first round starts.
+      this.player.applyClass(selection.tank);
       // Apply on-foot gun and melee selections so soldiers spawn with chosen weapons (t031/t034).
       this.playerController.soldierGunId   = selection.gun;
       this.playerController.soldierMeleeId = selection.melee;
@@ -816,6 +820,8 @@ export class Game {
         `[Game] Loadout updated — tank:${selection.tank} ` +
         `gun:${selection.gun} melee:${selection.melee}`
       );
+      // Re-apply selected tank class stats to the player tank (t037).
+      this.player.applyClass(selection.tank);
       // Apply on-foot gun and melee selections so soldiers spawn with chosen weapons (t031/t034).
       this.playerController.soldierGunId   = selection.gun;
       this.playerController.soldierMeleeId = selection.melee;
