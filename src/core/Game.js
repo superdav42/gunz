@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { Terrain } from '../entities/Terrain.js';
+import { Soldier } from '../entities/Soldier.js';
 import { InputSystem } from '../systems/InputSystem.js';
 import { ProjectileSystem } from '../systems/ProjectileSystem.js';
 import { CollisionSystem } from '../systems/CollisionSystem.js';
@@ -180,6 +181,14 @@ export class Game {
       })
       .onTankKilled((tank, byPlayer) => {
         this.stats.recordTankKilled(tank, byPlayer);
+        // Bail the destroyed enemy tank's crew as an AI soldier (t028).
+        // The bail is captured BEFORE enemies.remove() strips the mesh, so
+        // tank.mesh.position is still valid here.
+        this._bailAITankAsSoldier(
+          tank.mesh.position.clone(),
+          tank.mesh.rotation.y,
+          1  // team 1 — only enemy tanks feed CollisionSystem's enemies adapter
+        );
       })
       .onKillFeed((killer, victim) => {
         this.killFeed.addMessage(killer, victim);
@@ -385,6 +394,18 @@ export class Game {
       // AIController: drives all ally (team 0, slots 1-5) and enemy AI tanks
       this.aiController.update(dt);
 
+      // AI soldier behavior (t028): bailed enemy crew advance, take cover, shoot
+      const playerSoldier = this.playerController.mode === 'soldier'
+        ? this.playerController.soldier
+        : null;
+      this.aiController.updateSoldiers(dt, this._getCoverPositions(), playerSoldier);
+
+      // Check AI soldier hits from player projectiles (t028)
+      this._checkAISoldierHits();
+
+      // Clean up AI soldiers whose HP reached 0 this frame
+      this._cleanupDeadAISoldiers();
+
       // Update each alive tank's fire cooldown
       for (const tank of this.teams.getAllLivingTanks()) {
         tank.update(dt);
@@ -452,21 +473,30 @@ export class Game {
     // playerController.soldier is set by PlayerController (t025) when on foot.
     const activeSoldier = this.playerController.soldier;
     if (activeSoldier && input.melee) {
-      // Build the list of valid melee targets: all living enemy tanks.
-      // Living enemy soldiers will be added here when t028 introduces AI soldiers.
-      const meleeTargets = [...this.teams.getEnemyTanks()];
+      // Melee targets: living enemy tanks + living AI enemy soldiers (t028)
+      const aiSoldiers = this.aiController.getActiveSoldiers()
+        .filter(s => s.teamId === 1 && s.health > 0);
+      const meleeTargets = [...this.teams.getEnemyTanks(), ...aiSoldiers];
       const hits = activeSoldier.melee(meleeTargets);
       for (const { target, damage } of hits) {
         // Record damage in the stats tracker so rewards are counted.
         this.stats.recordPlayerDamage(target, damage);
         const hitPos = target.mesh.position.clone();
         if (target.health <= 0) {
-          this.stats.recordTankKilled(target, true);
           this.killFeed.addMessage(
             activeSoldier.name || 'Player',
             target.name || 'Enemy'
           );
-          this.teams.killTank(target);
+          if (target instanceof Soldier) {
+            // Melee killed an AI soldier — use t029 killSoldier for mesh removal
+            // and round-end check; remove from AIController tracking too.
+            this.teams.killSoldier(target);
+            this.aiController.removeSoldier(target);
+          } else {
+            // Melee killed a tank
+            this.stats.recordTankKilled(target, true);
+            this.teams.killTank(target);
+          }
           this.particles.emitExplosion(hitPos, { count: 25, speed: 8 });
         } else {
           // Small impact burst for a non-lethal melee hit.
@@ -480,6 +510,124 @@ export class Game {
     if (this._playerDustTimer <= 0 && isMoving) {
       this._playerDustTimer = 0.15;
       this.particles.emitDust(this.playerController.mesh.position);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // On-foot AI helpers (t028)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Spawn an AI soldier at the given world position when an AI tank is destroyed.
+   * The soldier is registered with AIController and added to the scene.
+   * The tank slot is already marked dead (teams.killTank was called by CollisionSystem);
+   * the soldier fights on independently — its death is tracked separately.
+   *
+   * @param {THREE.Vector3} pos    — tank's last world position (cloned before mesh removal)
+   * @param {number}        rotY   — tank's Y rotation at death
+   * @param {number}        teamId — 0 = ally, 1 = enemy
+   */
+  _bailAITankAsSoldier(pos, rotY, teamId) {
+    const y = this.terrain.getHeightAt(pos.x, pos.z);
+    const soldier = new Soldier({
+      isPlayer: false,
+      teamId,
+      name: teamId === 1 ? 'Enemy Crew' : 'Ally Crew',
+    });
+    soldier.mesh.position.set(pos.x, y, pos.z);
+    soldier.mesh.rotation.y = rotY;
+    this.scene.add(soldier.mesh);
+
+    // Register with TeamManager BEFORE the tank slot is killed (killTank fires
+    // after onTankKilled returns).  This prevents a false team-elimination signal
+    // if this was the last tank: isTeamEliminated() will find the live soldier and
+    // correctly defer the elimination callback until the soldier also dies (t029).
+    this.teams.registerSoldier(soldier, teamId);
+
+    this.aiController.addSoldier(soldier, teamId, this.scene);
+    console.info(`[Game] AI tank destroyed — crew bailed as soldier (team ${teamId}).`);
+  }
+
+  /**
+   * Build a flat list of cover obstacle positions from wrecks and living trees.
+   * Passed to AIController.updateSoldiers() each frame so soldiers can seek cover.
+   *
+   * @returns {Array<{x: number, z: number}>}
+   */
+  _getCoverPositions() {
+    // Wrecks (static + dynamic)
+    const positions = this.wrecks.obstacles.map(o => ({ x: o.x, z: o.z }));
+
+    // Living trees also provide cover (they can be destroyed, but until then they block)
+    for (const tree of this.trees.trees) {
+      if (tree.alive && tree.group) {
+        positions.push({ x: tree.group.position.x, z: tree.group.position.z });
+      }
+    }
+
+    return positions;
+  }
+
+  /**
+   * Check whether any player-owned projectile has hit an AI soldier this frame.
+   * Mirrors _checkSoldierHit() but operates on AI-controlled soldiers.
+   * Hit radius is tighter than tanks to reflect the capsule silhouette.
+   */
+  _checkAISoldierHits() {
+    const aiSoldiers = this.aiController.getActiveSoldiers();
+    if (aiSoldiers.length === 0) return;
+
+    const projectiles = this.projectiles.active;
+    const HIT_RADIUS = 1.2;
+
+    for (let i = projectiles.length - 1; i >= 0; i--) {
+      const p = projectiles[i];
+      if (!p.isPlayerOwned) continue; // only player bullets hit AI soldiers here
+
+      for (let si = aiSoldiers.length - 1; si >= 0; si--) {
+        const soldier = aiSoldiers[si];
+        if (soldier.health <= 0) continue; // already dead this frame
+
+        const dist = p.mesh.position.distanceTo(soldier.mesh.position);
+        if (dist < HIT_RADIUS) {
+          const hitPos = p.mesh.position.clone();
+          const actualDamage = Math.min(p.damage, soldier.health);
+          if (p.ownerTank) p.ownerTank.recordDamage(actualDamage);
+          soldier.takeDamage(p.damage);
+          this.projectiles.remove(i);
+          this.particles.emitExplosion(hitPos, { count: 6, speed: 3, lifetime: 0.3 });
+
+          if (soldier.health <= 0) {
+            // Soldier is dead — cleanup handled in _cleanupDeadAISoldiers()
+            const killerName = p.ownerTank ? (p.ownerTank.name || 'Player') : 'Player';
+            this.killFeed.addMessage(killerName, soldier.name || 'Enemy Crew');
+          }
+          break; // projectile consumed
+        }
+      }
+    }
+  }
+
+  /**
+   * Remove any AI soldiers whose HP reached 0 this frame.
+   * Called once per game-loop tick after updateSoldiers() and _checkAISoldierHits().
+   * Removes mesh from scene and unregisters the soldier from AIController.
+   */
+  _cleanupDeadAISoldiers() {
+    const aiSoldiers = this.aiController.getActiveSoldiers();
+    for (let i = aiSoldiers.length - 1; i >= 0; i--) {
+      const soldier = aiSoldiers[i];
+      if (soldier.health <= 0) {
+        const deathPos = soldier.mesh.position.clone();
+        // teams.killSoldier handles mesh removal and fires the team-elimination
+        // check (t029).  It must be called before aiController.removeSoldier so
+        // the round-end callback fires while the soldier is still in the AIController
+        // list (removeSoldier is purely internal bookkeeping).
+        this.teams.killSoldier(soldier);
+        this.aiController.removeSoldier(soldier);
+        this.particles.emitExplosion(deathPos, { count: 10, speed: 5, lifetime: 0.5 });
+        console.info('[Game] AI soldier destroyed.');
+      }
     }
   }
 
