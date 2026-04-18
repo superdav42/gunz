@@ -10,6 +10,7 @@ import { HUD } from '../ui/HUD.js';
 import { KillFeed } from '../ui/KillFeed.js';
 import { MatchOverlay } from '../ui/MatchOverlay.js';
 import { Scoreboard } from '../ui/Scoreboard.js';
+import { LoadoutScreen } from '../ui/LoadoutScreen.js';
 import { CameraController } from '../systems/CameraController.js';
 import { TeamManager } from './TeamManager.js';
 import { AIController } from '../systems/AIController.js';
@@ -26,6 +27,9 @@ export class Game {
     this.clock = new THREE.Clock();
     this.score = 0;
     this.isRunning = false;
+
+    /** @type {{tank: string, gun: string, melee: string}|null} */
+    this.currentLoadout = null;
 
     this._initRenderer();
     this._initScene();
@@ -163,7 +167,11 @@ export class Game {
 
     // LeagueSystem: tracks LP and current league in memory (t020).
     // Seeded from the saved profile so progression carries over between sessions.
-    this.league = new LeagueSystem(this.save.getProfile());
+    const savedProfile = this.save.getProfile();
+    this.league = new LeagueSystem({
+      leagueId: savedProfile.leagueId,
+      lp: savedProfile.leaguePoints,
+    });
 
     // LeagueDisplay: badge + LP bar overlay shown at match end (t023).
     this.leagueDisplay = new LeagueDisplay();
@@ -227,18 +235,10 @@ export class Game {
           `New balance: $${this.economy.balance}`
         );
 
-        // Determine LP result key from match score (roundWins = [team0, team1]).
-        // Team 0 = player, team 1 = enemy.
+        // Apply LP change based on match score (t020/t023).
+        // roundWins = [team0Wins, team1Wins]; team 0 = player.
         const [pw, ew] = this.match.roundWins;
-        let lpResultKey;
-        if (playerWon) {
-          lpResultKey = pw === 2 && ew === 0 ? 'win20' : 'win21';
-        } else {
-          lpResultKey = pw === 0 ? 'lose02' : 'lose12';
-        }
-
-        // Apply LP change and persist to localStorage (t020/t023).
-        const leagueEvent = this.league.applyMatchResult(lpResultKey);
+        const leagueResult = this.league.applyMatchResult({ playerWins: pw, enemyWins: ew });
         this.save.updateLeague(this.league.leagueId, this.league.lp);
 
         // Persist updated balance to localStorage via SaveSystem (t015).
@@ -248,7 +248,7 @@ export class Game {
         // Show league display and animate the LP change (t023).
         this.leagueDisplay.show();
         // Brief delay lets the MATCH_END overlay render first.
-        setTimeout(() => this.leagueDisplay.animateChange(leagueEvent), 600);
+        setTimeout(() => this.leagueDisplay.animateChange(leagueResult), 600);
       });
 
     // AIController drives all 10 AI tanks (team 0 slots 1-5 as allies, team 1 all 6 as enemies)
@@ -266,9 +266,32 @@ export class Game {
     // MatchOverlay binds to DOM overlays in index.html.
     this.matchOverlay = new MatchOverlay(this);
     this.match.onUIUpdate(ui => this.matchOverlay.update(ui));
+
+    // LoadoutScreen (t018): pre-match tank + weapon selection.
+    // Uses SaveSystem for owned items and equipped loadout persistence.
+    this.loadoutScreen = new LoadoutScreen(this.save);
   }
 
+  /**
+   * Show the LoadoutScreen, then begin the game loop once the player deploys.
+   * Call this on fresh game start.
+   */
   start() {
+    this.loadoutScreen.show((selection) => {
+      this.currentLoadout = selection;
+      // Persist the selection so it survives a page reload.
+      this.save.setLoadout(selection.tank, selection.gun, selection.melee);
+      this.save.save();
+      console.info(
+        `[Game] Loadout selected — tank:${selection.tank} ` +
+        `gun:${selection.gun} melee:${selection.melee}`
+      );
+      this._startImmediately();
+    });
+  }
+
+  /** @private Start the render loop without showing the loadout screen. */
+  _startImmediately() {
     this.isRunning = true;
     this.clock.start();
     this._loop();
@@ -407,28 +430,42 @@ export class Game {
   }
 
   /**
-   * Full match restart — resets the state machine and all subsystems.
+   * Full match restart — shows the LoadoutScreen, then resets and relaunches.
    * Called by the "Play Again" button in MatchOverlay.
    */
   restart() {
-    this.score = 0;
     // Hide league display overlay before returning to play.
     this.leagueDisplay.hide();
-    // Reset match state machine first (no team events should fire during reset)
-    this.match.reset();
-    // Reset StatsTracker for the new match
-    this.stats.reset();
-    // Reset field entities
-    this.teams.reset();
-    this.projectiles.reset();
-    this.particles.reset();
-    this.trees.reset();
-    this.wrecks.reset();
-    this._playerDustTimer = 0;
-    this._enemyDustTimer = 0;
-    this.hud.hideGameOver();
-    this.killFeed.clear();
-    this.start();
+    // Pause the game loop while the loadout screen is shown.
+    this.isRunning = false;
+
+    this.loadoutScreen.show((selection) => {
+      this.currentLoadout = selection;
+      this.save.setLoadout(selection.tank, selection.gun, selection.melee);
+      this.save.save();
+      console.info(
+        `[Game] Loadout updated — tank:${selection.tank} ` +
+        `gun:${selection.gun} melee:${selection.melee}`
+      );
+
+      this.score = 0;
+      // Reset match state machine first (no team events should fire during reset)
+      this.match.reset();
+      // Reset StatsTracker for the new match
+      this.stats.reset();
+      // Reset field entities
+      this.teams.reset();
+      this.projectiles.reset();
+      this.particles.reset();
+      this.trees.reset();
+      this.wrecks.reset();
+      this._playerDustTimer = 0;
+      this._enemyDustTimer = 0;
+      this.hud.hideGameOver();
+      this.killFeed.clear();
+
+      this._startImmediately();
+    });
   }
 
   _onResize() {

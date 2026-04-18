@@ -239,10 +239,14 @@ export class LeagueDisplay {
    * Shows the LP delta pop-in, transitions the bar/badge, and displays the
    * promo/demo banner when the league tier changes.
    *
-   * @param {{ oldLeagueId: string, newLeagueId: string, oldLp: number, newLp: number, delta: number, promoted: boolean, demoted: boolean }} event
+   * Accepts the shape returned by LeagueSystem.applyMatchResult():
+   *   { lpDelta, oldLp, newLp, oldLeagueId, newLeagueId, promoted, demoted }
+   *
+   * @param {{ lpDelta: number, newLp: number, newLeagueId: string, promoted: boolean, demoted: boolean }} event
    */
   animateChange(event) {
-    const { delta, promoted, demoted, newLeagueId, newLp } = event;
+    const { lpDelta, promoted, demoted, newLeagueId, newLp } = event;
+    const delta = lpDelta;
 
     // Floating LP delta text
     this._showDeltaPop(delta);

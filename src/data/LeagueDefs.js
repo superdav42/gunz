@@ -235,3 +235,23 @@ export function getLeagueForLP(lp) {
   }
   return 'bronze';
 }
+
+/**
+ * Minimum LP floor per league.
+ *
+ * Prevents a losing streak from dropping the player more than one league tier
+ * per LP calculation. The floor equals the lpRequired of the league below,
+ * so the player can demote to the previous tier but LP cannot skip past it.
+ *
+ * Bronze floor is 0 (no league below).
+ *
+ * @param {string} leagueId
+ * @returns {number}
+ */
+export function lpFloorForLeague(leagueId) {
+  const idx = LEAGUE_ORDER.indexOf(leagueId);
+  if (idx <= 0) {
+    return 0;
+  }
+  return LeagueDefs[LEAGUE_ORDER[idx - 1]].lpRequired;
+}
