@@ -29,6 +29,7 @@ import { LeagueDisplay } from '../ui/LeagueDisplay.js';
 import { MainMenu } from '../ui/MainMenu.js';
 import { getLeagueDef } from '../data/LeagueDefs.js';
 import { SoundSystem } from '../systems/SoundSystem.js';
+import { MusicSystem } from '../systems/MusicSystem.js';
 import { MapLayout } from '../systems/MapLayout.js';
 import { TankAbilityEffects } from '../systems/TankAbilityEffects.js';
 import { FlameSystem } from '../systems/FlameSystem.js';
@@ -134,6 +135,9 @@ export class Game {
     this.sound = new SoundSystem();
     // Attach UI click sounds to all present and future DOM buttons globally.
     this.sound.bindUIClicks();
+
+    // MusicSystem (t057): procedurally-synthesised music tracks.
+    this.music = new MusicSystem();
 
     this.input = new InputSystem(this.canvas);
     // CameraController uses target.mesh; PlayerController exposes that getter
@@ -318,6 +322,12 @@ export class Game {
       })
       .onMatchEnd((winnerId) => {
         const playerWon = winnerId === 0;
+        // Play victory or defeat sting (t057).
+        if (playerWon) {
+          this.music.playVictory();
+        } else {
+          this.music.playDefeat();
+        }
         const matchStats = this.stats.getMatchStats();
         console.info(
           `[Game] Match over — ${playerWon ? 'Player' : 'Enemy'} team wins! ` +
@@ -458,6 +468,8 @@ export class Game {
    */
   _showMainMenu() {
     this._syncMainMenu();
+    // Play menu music while the main menu is visible (t057).
+    this.music.playMenu();
     this.mainMenu.show({
       onPlay:    () => this._showLoadoutThenPlay(),
       onShop:    () => this._openShopFromMenu(),
@@ -513,6 +525,8 @@ export class Game {
       this._applyLoadoutToAbilitySystem(selection);
       // Apply the equipped cosmetic skin to the player tank (t053).
       this.teams.player.applySkin(this.save.getEquippedSkin());
+      // Switch from menu music to combat music when match begins (t057).
+      this.music.playCombat();
       this._startImmediately();
     });
   }
