@@ -50,10 +50,16 @@ export class TeamManager {
   /**
    * @param {THREE.Scene} scene
    * @param {import('../entities/Terrain.js').Terrain} terrain
+   * @param {object} [opts]
+   * @param {string|null} [opts.playerSkinId=null] — skin ID from SkinDefs to apply to the
+   *   player's tank on creation; null keeps the team default colors.
    */
-  constructor(scene, terrain) {
+  constructor(scene, terrain, { playerSkinId = null } = {}) {
     this.scene = scene;
     this.terrain = terrain;
+
+    /** @type {string|null} Skin ID applied to the player tank. */
+    this._playerSkinId = playerSkinId;
 
     /**
      * @type {Array<{id: number, name: string, slots: Array<{tank: Tank, alive: boolean}>}>}
@@ -304,6 +310,11 @@ export class TeamManager {
         name: isPlayer ? 'Player' : `Ally ${i}`,
         tankClassId,
       });
+
+      // Apply the player's equipped skin cosmetic (t053).
+      if (isPlayer && this._playerSkinId) {
+        tank.applySkin(this._playerSkinId);
+      }
 
       const pos = this._spawnPosition(i, 0);
       tank.mesh.position.copy(pos);

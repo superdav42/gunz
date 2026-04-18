@@ -419,6 +419,8 @@ export class Game {
        this.playerController.soldierMeleeId = selection.melee;
        // Configure AbilitySystem slots from the chosen loadout (t042).
        this._applyLoadoutToAbilitySystem(selection);
+       // Apply the equipped cosmetic skin to the player tank (t053).
+       this.teams.player.applySkin(this.save.getEquippedSkin());
        this._startImmediately();
     });
   }
@@ -1093,6 +1095,8 @@ export class Game {
       this.tankAbilityEffects.reset();
       // Reset field entities
       this.teams.reset();
+      // Re-apply skin after reset (handles skin changes between matches) (t053).
+      this.teams.player.applySkin(this.save.getEquippedSkin());
       this.projectiles.reset();
       this.particles.reset();
       this.trees.reset();

@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { Projectile } from './Projectile.js';
 import { getTankDef } from '../data/TankDefs.js';
 import { applyTankUpgrades } from '../data/UpgradeDefs.js';
+import { SkinDefs } from '../data/SkinDefs.js';
 
 
 /**
@@ -213,6 +214,38 @@ export class Tank {
   }
 
   /**
+   * Apply a cosmetic skin to this tank by swapping hull and turret material colors.
+   *
+   * Accepts either a skin ID string (looked up in SkinDefs) or a raw skin
+   * definition object with `colorBody` and `colorTurret` fields.  Passing
+   * `null` or an empty string resets to the palette the tank was built with.
+   *
+   * @param {string|object|null} skin — skin ID, skin def object, or null to reset
+   */
+  applySkin(skin) {
+    if (!skin) {
+      // Reset to original build palette stored on the material.
+      this._hullMat.color.setHex(this._originalPalette.body);
+      this._turretMat.color.setHex(this._originalPalette.turret);
+      return;
+    }
+
+    let def;
+    if (typeof skin === 'string') {
+      def = SkinDefs[skin];
+      if (!def) {
+        console.warn(`[Tank] applySkin: unknown skin id "${skin}" — keeping current colors.`);
+        return;
+      }
+    } else {
+      def = skin;
+    }
+
+    this._hullMat.color.setHex(def.colorBody);
+    this._turretMat.color.setHex(def.colorTurret);
+  }
+
+  /**
    * Build the tank mesh using class-specific geometry parameters.
    *
    * Hull/track/turret/barrel dimensions are read from CLASS_MESH_PARAMS so that
@@ -224,6 +257,9 @@ export class Tank {
    * @returns {THREE.Group}
    */
   _buildMesh(palette, classId) {
+    // Store the build-time palette for skin-reset support.
+    this._originalPalette = { body: palette.body, turret: palette.turret };
+
     const p = CLASS_MESH_PARAMS[classId] || CLASS_MESH_PARAMS.standard;
     const group = new THREE.Group();
 
@@ -239,6 +275,8 @@ export class Tank {
       roughness: 0.7,
       metalness: 0.3,
     });
+    // Keep a reference so applySkin() can swap it later.
+    this._hullMat = hullMat;
     const hull = new THREE.Mesh(hullGeo, hullMat);
     hull.position.y = hullCenterY;
     hull.castShadow = true;
@@ -276,6 +314,8 @@ export class Tank {
       roughness: 0.6,
       metalness: 0.4,
     });
+    // Keep a reference so applySkin() can swap it later.
+    this._turretMat = turretMat;
     const turretMesh = new THREE.Mesh(turretGeo, turretMat);
     turretMesh.castShadow = true;
     turretGroup.add(turretMesh);

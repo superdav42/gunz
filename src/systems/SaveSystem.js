@@ -1,7 +1,7 @@
 /**
  * SaveSystem — schema-versioned localStorage persistence for the player profile.
  *
- * Persisted profile fields (schema v1):
+ * Persisted profile fields (schema v2):
  *  - schemaVersion      : number
  *  - money              : number — bank balance (kept in sync with EconomySystem)
  *  - leagueId           : string — 'bronze' | 'silver' | 'gold' | 'platinum' | 'diamond' | 'champion'
@@ -13,6 +13,7 @@
  *  - equippedTankClass  : string
  *  - equippedPrimary    : string
  *  - equippedMelee      : string
+ *  - equippedSkin       : string|null — skin ID currently equipped, or null for default
  *  - upgrades           : object — { [scope: tankClass | 'infantry']: { [upgradeId]: tier } }
  *
  * Schema versioning:
@@ -29,7 +30,7 @@
  */
 
 /** Increment when the profile schema changes.  Add migration in _migrate(). */
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 /** localStorage key. */
 const STORAGE_KEY = 'gunz_profile_v1';
@@ -51,6 +52,7 @@ function createDefaultProfile() {
     equippedTankClass: 'standard',
     equippedPrimary: 'pistol',
     equippedMelee: 'combat_knife',
+    equippedSkin: null,
     upgrades: {},
   };
 }
@@ -213,6 +215,26 @@ export class SaveSystem {
   }
 
   /**
+   * Equip or unequip a cosmetic skin.
+   *
+   * @param {string|null} skinId — skin ID from SkinDefs, or null to revert to default
+   */
+  setEquippedSkin(skinId) {
+    this._assertLoaded();
+    this._profile.equippedSkin = skinId || null;
+  }
+
+  /**
+   * Return the currently equipped skin ID (or null if none).
+   *
+   * @returns {string|null}
+   */
+  getEquippedSkin() {
+    this._assertLoaded();
+    return this._profile.equippedSkin || null;
+  }
+
+  /**
    * Record a purchased upgrade tier.
    *
    * @param {string} scope     — tank class ID or 'infantry' for on-foot weapon upgrades
@@ -274,6 +296,12 @@ export class SaveSystem {
       raw.upgrades         = raw.upgrades         ?? {};
     }
 
+    // v1 → v2: add equippedSkin field (null = no skin / default colors).
+    if (fromVersion < 2) {
+      raw.schemaVersion = 2;
+      raw.equippedSkin  = raw.equippedSkin ?? null;
+    }
+
     // Future migrations go here as additional `if (fromVersion < N)` blocks.
 
     return _mergeWithDefaults(raw);
@@ -329,6 +357,7 @@ function _mergeWithDefaults(raw) {
     equippedTankClass:typeof raw.equippedTankClass === 'string' ? raw.equippedTankClass                         : d.equippedTankClass,
     equippedPrimary:  typeof raw.equippedPrimary   === 'string' ? raw.equippedPrimary                           : d.equippedPrimary,
     equippedMelee:    typeof raw.equippedMelee     === 'string' ? raw.equippedMelee                             : d.equippedMelee,
+    equippedSkin:     (typeof raw.equippedSkin     === 'string' || raw.equippedSkin === null) ? raw.equippedSkin : d.equippedSkin,
     upgrades: (typeof raw.upgrades === 'object' && raw.upgrades !== null) ? raw.upgrades : d.upgrades,
   };
 }
@@ -346,6 +375,7 @@ function _mergeWithDefaults(raw) {
  *   equippedTankClass:string,
  *   equippedPrimary:  string,
  *   equippedMelee:    string,
+ *   equippedSkin:     string|null,
  *   upgrades:         Object.<string, Object.<string, number>>
  * }} PlayerProfile
  */
