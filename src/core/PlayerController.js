@@ -77,6 +77,23 @@ export class PlayerController {
      * @type {string}
      */
     this.soldierGunId = 'pistol';
+
+    /**
+     * Melee weapon id to equip on the soldier when spawned (t034).
+     * Set from the loadout selection (Game.js) before any soldier is created.
+     * Defaults to the starter combat knife.
+     * @type {string}
+     */
+    this.soldierMeleeId = 'combatKnife';
+
+    /**
+     * Active weapon slot in soldier mode (t034).
+     * 'gun'   — fire button fires the equipped gun.
+     * 'melee' — fire button triggers a melee swing (targets resolved in Game.js).
+     * Resets to 'gun' on mode reset so each new life starts with gun selected.
+     * @type {'gun' | 'melee'}
+     */
+    this.activeWeaponSlot = 'gun';
   }
 
   // ---------------------------------------------------------------------------
@@ -240,11 +257,13 @@ export class PlayerController {
 
   /**
    * Reset to tank mode for a new round: remove any active soldier.
+   * Also resets weapon slot so the next bail-out starts with the gun selected.
    */
   reset() {
     this.clearSoldier();
     this._tankIdle = false;
     this.mode = 'tank';
+    this.activeWeaponSlot = 'gun';
   }
 
   // ---------------------------------------------------------------------------
@@ -274,30 +293,43 @@ export class PlayerController {
 
   /** @private */
   _updateTankMode(input, dt) {
-    const MOVE_SPEED = 12;
-    const TURN_SPEED = 2.5;
     const tank    = this.tank;
     const terrain = this.terrain;
 
-    const moving = input.forward || input.backward;
+    // Use the tank's class-defined movement stats (set by Tank._applyClassDef).
+    // speed is in world-units/second; turnRate is in radians/second.
+    const moveSpeed = tank.speed;
+    const turnSpeed = tank.turnRate;
 
-    if (input.forward)  tank.mesh.translateZ(-MOVE_SPEED * dt);
-    if (input.backward) tank.mesh.translateZ(MOVE_SPEED * 0.6 * dt);
-    if (input.left)     tank.mesh.rotation.y += TURN_SPEED * dt;
-    if (input.right)    tank.mesh.rotation.y -= TURN_SPEED * dt;
+    // Lockdown Mode (t043): suppress all hull movement while active.
+    // Turret can still track the target; firing continues at doubled rate.
+    const locked = tank.isLockedDown;
+
+    const moving = !locked && (input.forward || input.backward);
+
+    if (!locked) {
+      if (input.forward)  tank.mesh.translateZ(-moveSpeed * dt);
+      if (input.backward) tank.mesh.translateZ(moveSpeed * 0.6 * dt);
+      if (input.left)     tank.mesh.rotation.y += turnSpeed * dt;
+      if (input.right)    tank.mesh.rotation.y -= turnSpeed * dt;
+    }
 
     if (input.turretAngle !== null) {
       tank.setTurretAngle(input.turretAngle);
     }
 
-    // Terrain follow + arena clamp
+    // Terrain follow + arena clamp.
+    // Skip terrain-follow while jumping — TankAbilityEffects drives the Y
+    // coordinate along the parabolic arc (t043 rocketJump).
     const pos = tank.mesh.position;
-    pos.y = terrain.getHeightAt(pos.x, pos.z);
+    if (!tank.isJumping) {
+      pos.y = terrain.getHeightAt(pos.x, pos.z);
+    }
     pos.x = THREE.MathUtils.clamp(pos.x, -ARENA_BOUND, ARENA_BOUND);
     pos.z = THREE.MathUtils.clamp(pos.z, -ARENA_BOUND, ARENA_BOUND);
 
-    // E key — voluntary exit
-    if (input.exitVehicle) {
+    // E key — voluntary exit (not permitted during lockdown or jump)
+    if (input.exitVehicle && !locked && !tank.isJumping) {
       this.exitTank();
     }
 
@@ -344,10 +376,17 @@ export class PlayerController {
       soldier.startReload();
     }
 
-    // Fire: pass isMoving for sniper accuracy penalty (t031).
-    // soldier.fire() always returns an array (empty if on cooldown / reloading).
+    // Weapon slot switching (t034): 1 = gun, 2 = melee.
+    if (input.switchToGun)   this.activeWeaponSlot = 'gun';
+    if (input.switchToMelee) this.activeWeaponSlot = 'melee';
+
+    // Fire: only fire the gun when the gun slot is active.
+    // When the melee slot is active the fire button is handled by Game.js as a
+    // melee swing (hit detection needs the full target list, not available here).
+    // F key / input.melee always swings melee regardless of the active slot —
+    // that path is handled entirely in Game.js and is not repeated here.
     let newProjectiles = [];
-    if (input.fire && soldier.canFire()) {
+    if (input.fire && this.activeWeaponSlot === 'gun' && soldier.canFire()) {
       newProjectiles = soldier.fire(moving);
     }
 
@@ -372,6 +411,8 @@ export class PlayerController {
     this.soldier.mesh.rotation.y = rotY;
     // Apply the loadout gun selection (t031) — defaults to pistol if not set.
     this.soldier.setGunWeapon(this.soldierGunId);
+    // Apply the loadout melee selection (t034) — defaults to combat knife if not set.
+    this.soldier.setMeleeWeapon(this.soldierMeleeId);
     this.scene.add(this.soldier.mesh);
 
     // Notify Game.js so TeamManager can register the soldier before any

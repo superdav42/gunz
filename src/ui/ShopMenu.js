@@ -272,6 +272,12 @@ export class ShopMenu {
     // League tier cap — maximum upgrade tier purchasable in current league.
     const tierCap = this._league.upgradeTierCap;
 
+    // Tank upgrades are scoped to the equipped tank class (t041).
+    // Upgrading "Armor Plating" for the Heavy class has no effect on the Scout.
+    const equippedClassId = this._save.getProfile().equippedTankClass || 'standard';
+    const equippedClassDef = TankDefs[equippedClassId] || TankDefs['standard'];
+    const tankUpgradeLabel = `Tank Upgrades — ${equippedClassDef.name}`;
+
     const renderGroup = (label, defs, orderArr, scope) => {
       const rows = orderArr.map(id => {
         const def = defs[id];
@@ -336,7 +342,7 @@ export class ShopMenu {
     };
 
     return (
-      renderGroup('Tank Upgrades', TankUpgradeDefs, TANK_UPGRADE_ORDER, 'standard') +
+      renderGroup(tankUpgradeLabel, TankUpgradeDefs, TANK_UPGRADE_ORDER, equippedClassId) +
       renderGroup('On-Foot Upgrades', FootUpgradeDefs, FOOT_UPGRADE_ORDER, 'infantry')
     );
   }

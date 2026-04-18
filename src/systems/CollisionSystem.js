@@ -10,12 +10,16 @@
  *  4. Tank-vs-obstacle blocking: pushes tanks out of rocks and living trees.
  *  5. Tank-vs-wreck blocking: same impulse resolve applied to WreckSystem
  *     obstacles so live tanks cannot drive through demolished hulls.
+ *  6. Projectile-vs-building collisions: shells damage building walls; fully
+ *     destroyed buildings stop blocking tanks (t047/t048).
+ *  7. Tank-vs-building blocking: tanks are pushed away from standing buildings
+ *     using the same impulse-resolve path as rocks/wrecks.
  *
  * Callbacks (set before first update):
  *  onScoreAdd(points)                    — called when an enemy tank is destroyed
  *  onPlayerDeath()                       — called when the player tank reaches 0 HP
  *  onHit(position, owner)                — called on every non-lethal shell impact
- *    owner: 'player' | 'enemy' | 'wreck'
+ *    owner: 'player' | 'enemy' | 'wreck' | 'building'
  *  onKill(position, owner, tankData)     — called when a shell destroys a tank
  *    owner: 'player' (player shell hit enemy) | 'enemy' (enemy shell hit player)
  *    tankData: { position: Vector3, rotationY: number } — snapshot for wreck spawning
@@ -29,6 +33,8 @@
  *  onKillFeed(killer, victim)            — called on every tank kill for the kill feed UI
  *    killer: display name of the entity that scored the kill ('Player', 'Enemy #2', …)
  *    victim: display name of the destroyed tank
+ *  onExplosion(position, splashRadius)   — called when an explosive projectile detonates
+ *  onBuildingWallDestroyed(position)     — called when a building wall is knocked down
  */
 export class CollisionSystem {
   /**
@@ -39,9 +45,10 @@ export class CollisionSystem {
    * @param {import('./ProjectileSystem.js').ProjectileSystem} opts.projectiles
    * @param {import('./TreeSystem.js').TreeSystem}             [opts.treeSystem]
    * @param {import('./WreckSystem.js').WreckSystem}           [opts.wrecks]
-   * @param {import('./MapLayout.js').MapLayout}               [opts.mapLayout]
+   * @param {import('./MapLayout.js').MapLayout}                [opts.mapLayout]
+   * @param {import('../entities/Village.js').VillageGenerator} [opts.villageSystem]
    */
-  constructor({ terrain, player, enemies, projectiles, treeSystem = null, wrecks = null, mapLayout = null }) {
+  constructor({ terrain, player, enemies, projectiles, treeSystem = null, wrecks = null, mapLayout = null, villageSystem = null }) {
     this.terrain = terrain;
     this.player = player;
     this.enemies = enemies;
@@ -49,6 +56,7 @@ export class CollisionSystem {
     this.treeSystem = treeSystem;
     this.wrecks = wrecks;
     this.mapLayout = mapLayout;
+    this.villageSystem = villageSystem;
 
     this._onScoreAdd = null;
     this._onPlayerDeath = null;
@@ -59,6 +67,8 @@ export class CollisionSystem {
     this._onTreeHit = null;
     this._onTreeDestroy = null;
     this._onKillFeed = null;
+    this._onExplosion = null;
+    this._onBuildingWallDestroyed = null;
 
     /**
      * Approximate half-width of a tank hull for obstacle push-back.
@@ -153,6 +163,24 @@ export class CollisionSystem {
     return this;
   }
 
+  /**
+   * Called whenever an explosive projectile detonates (t032).
+   * @param {(position: import('three').Vector3, splashRadius: number) => void} cb
+   */
+  onExplosion(cb) {
+    this._onExplosion = cb;
+    return this;
+  }
+
+  /**
+   * Called whenever a building wall is knocked down (t047/t048).
+   * @param {(position: import('three').Vector3) => void} cb
+   */
+  onBuildingWallDestroyed(cb) {
+    this._onBuildingWallDestroyed = cb;
+    return this;
+  }
+
   // ---------------------------------------------------------------------------
   // Per-frame entry point
   // ---------------------------------------------------------------------------
@@ -160,6 +188,9 @@ export class CollisionSystem {
   update() {
     this._checkProjectileCollisions();
     this._checkTankObstacleCollisions();
+    if (this.villageSystem) {
+      this._checkProjectileBuildingCollisions();
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -181,12 +212,12 @@ export class CollisionSystem {
         const dist = p.mesh.position.distanceTo(e.mesh.position);
         if (dist < 2.5) {
           const hitPos = p.mesh.position.clone();
-          // Cap actualDamage to remaining HP so scoreboard stats don't over-count overkill.
-          const actualDamage = Math.min(p.damage, e.health);
+          // takeDamage returns actual HP removed (post-armor, clamped to remaining HP).
+          // Using the return value ensures stats account for armor reduction correctly.
+          const actualDamage = e.takeDamage(p.damage);
           if (p.ownerTank) p.ownerTank.recordDamage(actualDamage);
-          // StatsTracker callback also uses the capped value (t010).
+          // StatsTracker callback also uses the capped/armored value (t010).
           if (this._onDamageDealt) this._onDamageDealt(e, actualDamage);
-          e.takeDamage(p.damage);
           this.projectiles.remove(i);
 
           if (e.health <= 0) {
@@ -235,10 +266,9 @@ export class CollisionSystem {
       const dist = p.mesh.position.distanceTo(player.mesh.position);
       if (dist < 2.5) {
         const hitPos = p.mesh.position.clone();
-        // Record damage dealt before applying it (health may clamp to 0)
-        const actualDamage = Math.min(p.damage, player.health);
+        // takeDamage returns actual HP removed (post-armor, clamped to remaining HP).
+        const actualDamage = player.takeDamage(p.damage);
         if (p.ownerTank) p.ownerTank.recordDamage(actualDamage);
-        player.takeDamage(p.damage);
         this.projectiles.remove(i);
 
         // Fire onExplosion for visual effect regardless of kill. (t032)
@@ -286,35 +316,6 @@ export class CollisionSystem {
             break; // projectile consumed
           }
         }
-      }
-    }
-
-    // Projectiles hitting village buildings — absorbed (t052)
-    if (this.mapLayout) {
-      const buildingObs = this.mapLayout.buildingObstacles;
-      for (let i = projectiles.length - 1; i >= 0; i--) {
-        const p = projectiles[i];
-        let hit = false;
-        for (const obs of buildingObs) {
-          const dx = p.mesh.position.x - obs.x;
-          const dz = p.mesh.position.z - obs.z;
-          const distSq = dx * dx + dz * dz;
-          const hitRadius = obs.radius + 0.3;
-          if (distSq < hitRadius * hitRadius) {
-            const hitPos = p.mesh.position.clone();
-            this.projectiles.remove(i);
-            if (p.splashRadius > 0) {
-              this._applySplashToEnemies(p, hitPos, null);
-              this._applySplashToPlayer(p, hitPos, null);
-              if (this._onExplosion) this._onExplosion(hitPos, p.splashRadius);
-            } else {
-              if (this._onHit) this._onHit(hitPos, 'building');
-            }
-            hit = true;
-            break;
-          }
-        }
-        if (hit) continue;
       }
     }
 
@@ -445,13 +446,13 @@ export class CollisionSystem {
       const dist = hitPos.distanceTo(e.mesh.position);
       if (dist >= radius) continue;
 
-      const falloff   = 1 - dist / radius;
-      const rawDmg    = p.damage * falloff;
-      const cappedDmg = Math.min(rawDmg, e.health);
+      const falloff  = 1 - dist / radius;
+      const rawDmg   = p.damage * falloff;
+      // takeDamage returns actual HP removed (post-armor, clamped to remaining HP).
+      const cappedDmg = e.takeDamage(rawDmg);
 
       if (this._onDamageDealt) this._onDamageDealt(e, cappedDmg);
       if (p.ownerTank) p.ownerTank.recordDamage(cappedDmg);
-      e.takeDamage(rawDmg);
 
       if (e.health <= 0) {
         inRange.push(e);
@@ -492,10 +493,10 @@ export class CollisionSystem {
 
     const falloff   = 1 - dist / radius;
     const rawDmg    = p.damage * falloff;
-    const cappedDmg = Math.min(rawDmg, player.health);
+    // takeDamage returns actual HP removed (post-armor, clamped to remaining HP).
+    const cappedDmg = player.takeDamage(rawDmg);
 
     if (p.ownerTank) p.ownerTank.recordDamage(cappedDmg);
-    player.takeDamage(rawDmg);
 
     if (player.health <= 0) {
       if (p.ownerTank) p.ownerTank.recordKill();
@@ -542,9 +543,9 @@ export class CollisionSystem {
       }
     }
 
-    // Village buildings (t052) block tanks and absorb projectiles
-    if (this.mapLayout) {
-      const buildingObs = this.mapLayout.buildingObstacles;
+    // Buildings block tanks until all their walls are destroyed (t047/t048/t052)
+    if (this.villageSystem) {
+      const buildingObs = this.villageSystem.activeObstacles;
       if (buildingObs.length > 0) {
         this._resolveObstacleCollision(this.player.mesh, buildingObs);
         for (const enemy of this.enemies.active) {
@@ -611,6 +612,66 @@ export class CollisionSystem {
           pos.x += (dx / dist) * overlap;
           pos.z += (dz / dist) * overlap;
         }
+      }
+    }
+  }
+
+  /**
+   * Check all active projectiles against all standing building walls (t047/t048).
+   *
+   * Uses a two-phase check:
+   *  1. Fast XZ distance check against the building's bounding radius.
+   *  2. AABB containment check to confirm the projectile is actually inside
+   *     the building footprint.
+   *
+   * On confirmed hit: calls building.hitByProjectile() which handles per-wall
+   * HP deduction and mesh removal.  Fires `_onBuildingWallDestroyed` so the
+   * game can emit debris particles.  Non-destructive hits use `_onHit`.
+   */
+  _checkProjectileBuildingCollisions() {
+    const projectiles = this.projectiles.active;
+    const buildings   = this.villageSystem.buildings;
+
+    for (let i = projectiles.length - 1; i >= 0; i--) {
+      const p   = projectiles[i];
+      const px  = p.mesh.position.x;
+      const pz  = p.mesh.position.z;
+
+      for (const building of buildings) {
+        if (!building.alive && building.obstacle.radius === 0) { continue; }
+
+        // Phase 1 — bounding-circle pre-filter
+        const dx      = px - building.x;
+        const dz      = pz - building.z;
+        const distSq  = dx * dx + dz * dz;
+        const checkR  = building.radius + 1.0; // small fudge for shell size
+        if (distSq > checkR * checkR) { continue; }
+
+        // Phase 2 — AABB containment
+        if (!building.containsPointXZ(px, pz)) { continue; }
+
+        // Hit confirmed — apply damage to the closest wall.
+        const hitPos = p.mesh.position.clone();
+        const result = building.hitByProjectile(hitPos, p.damage);
+
+        if (!result.hit) { continue; }
+
+        this.projectiles.remove(i);
+
+        // Explosive detonation: splash damage + explosion particle.
+        if (p.splashRadius > 0) {
+          this._applySplashToEnemies(p, hitPos, null);
+          this._applySplashToPlayer(p, hitPos, null);
+          if (this._onExplosion) { this._onExplosion(hitPos, p.splashRadius); }
+        }
+
+        if (result.wallDestroyed) {
+          if (this._onBuildingWallDestroyed) { this._onBuildingWallDestroyed(hitPos); }
+        } else if (!p.splashRadius) {
+          if (this._onHit) { this._onHit(hitPos, 'building'); }
+        }
+
+        break; // projectile consumed; skip remaining buildings
       }
     }
   }
