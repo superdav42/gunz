@@ -1121,6 +1121,305 @@
       .sb-row { grid-template-columns: 56px 1fr 36px 52px 44px; font-size: 11px; gap: 4px; }
       .sb-divider { margin: 0 10px; }
     }
+
+    /* ========================================================
+       SHOP MENU (t017)
+       ======================================================== */
+
+    #shop-menu {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.82);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 200;
+      pointer-events: auto;
+    }
+
+    #shop-menu.hidden { display: none; }
+
+    .shop-panel {
+      background: rgba(10, 14, 22, 0.97);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 12px;
+      width: min(960px, 96vw);
+      max-height: 90vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .shop-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 22px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      flex-shrink: 0;
+    }
+
+    .shop-title {
+      color: #fff;
+      font-size: 18px;
+      font-weight: 900;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+    }
+
+    .shop-meta {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .shop-money {
+      color: #ffd700;
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    .shop-league-badge {
+      background: rgba(255, 255, 255, 0.12);
+      color: rgba(255, 255, 255, 0.8);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      padding: 3px 10px;
+      border-radius: 12px;
+    }
+
+    .shop-close-btn {
+      background: none;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      color: rgba(255, 255, 255, 0.6);
+      font-size: 16px;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .shop-close-btn:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
+
+    .shop-tabs {
+      display: flex;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      flex-shrink: 0;
+    }
+
+    .shop-tab-btn {
+      flex: 1;
+      padding: 12px 0;
+      background: none;
+      border: none;
+      color: rgba(255, 255, 255, 0.5);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      cursor: pointer;
+      border-bottom: 3px solid transparent;
+      transition: color 0.15s, border-color 0.15s;
+    }
+
+    .shop-tab-btn:hover { color: rgba(255, 255, 255, 0.85); }
+    .shop-tab-btn.active { color: #fff; border-bottom-color: #4caf50; }
+
+    .shop-content {
+      overflow-y: auto;
+      padding: 18px 20px;
+      flex: 1;
+    }
+
+    .shop-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 12px;
+    }
+
+    .shop-card {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      transition: border-color 0.15s;
+    }
+
+    .shop-card:hover { border-color: rgba(255, 255, 255, 0.25); }
+    .shop-card.owned { background: rgba(76,175,80,0.08); border-color: rgba(76,175,80,0.35); }
+    .shop-card.locked { opacity: 0.55; }
+
+    .shop-card-name {
+      color: #fff;
+      font-size: 14px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .shop-ability-tag {
+      background: rgba(255,165,0,0.18);
+      color: #ffa500;
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    .shop-type-tag {
+      background: rgba(100,150,255,0.15);
+      color: #8ab4f8;
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    .shop-card-desc {
+      color: rgba(255,255,255,0.55);
+      font-size: 12px;
+      line-height: 1.4;
+      flex: 1;
+    }
+
+    .shop-card-stats {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .shop-card-stats span {
+      color: rgba(255,255,255,0.7);
+      font-size: 11px;
+      font-weight: 600;
+      background: rgba(255,255,255,0.07);
+      padding: 2px 7px;
+      border-radius: 4px;
+    }
+
+    .shop-req-label { color: #ff9800; font-size: 11px; font-weight: 600; }
+
+    .shop-buy-btn {
+      width: 100%;
+      padding: 8px 0;
+      background: #4caf50;
+      border: none;
+      border-radius: 6px;
+      color: #fff;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .shop-buy-btn:hover:not(.disabled) { background: #43a047; }
+    .shop-buy-btn.disabled,
+    .shop-buy-btn[disabled] {
+      background: rgba(255,255,255,0.1);
+      color: rgba(255,255,255,0.35);
+      cursor: not-allowed;
+    }
+
+    .shop-owned-label, .shop-free-label, .shop-maxed-label {
+      display: block;
+      text-align: center;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      padding: 7px 0;
+      border-radius: 6px;
+    }
+
+    .shop-owned-label { color: #4caf50; background: rgba(76,175,80,0.1); }
+    .shop-free-label  { color: #8ab4f8; background: rgba(100,150,255,0.1); }
+    .shop-maxed-label { color: #ffd700; background: rgba(255,215,0,0.1); }
+
+    .shop-weapon-group, .shop-upgrade-group { margin-bottom: 24px; }
+
+    .shop-group-label {
+      color: rgba(255,255,255,0.45);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid rgba(255,255,255,0.07);
+    }
+
+    .shop-upgrade-row {
+      display: grid;
+      grid-template-columns: 1fr auto auto auto;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+
+    .shop-upgrade-row.maxed { opacity: 0.5; }
+    .shop-upgrade-row.locked { opacity: 0.55; }
+
+    .shop-upgrade-info { display: flex; flex-direction: column; gap: 3px; }
+    .shop-upgrade-name { color: #fff; font-size: 13px; font-weight: 700; }
+    .shop-upgrade-effect { color: rgba(255,255,255,0.5); font-size: 11px; }
+
+    .shop-upgrade-tiers { display: flex; align-items: center; gap: 4px; }
+
+    .tier-pip {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      border: 1.5px solid rgba(255,255,255,0.3);
+      background: transparent;
+      display: inline-block;
+    }
+
+    .tier-pip.filled { background: #4caf50; border-color: #4caf50; }
+    .tier-count { color: rgba(255,255,255,0.4); font-size: 11px; margin-left: 4px; }
+    .shop-upgrade-action { min-width: 90px; }
+    .shop-upgrade-action .shop-buy-btn { padding: 6px 12px; }
+
+    .shop-flash {
+      padding: 10px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      border-radius: 0;
+      text-align: center;
+      animation: fadeInOut 2s ease forwards;
+    }
+
+    .shop-flash-success { background: rgba(76,175,80,0.25); color: #a5d6a7; }
+    .shop-flash-error   { background: rgba(244,67,54,0.25); color: #ef9a9a; }
+
+    @keyframes fadeInOut {
+      0%   { opacity: 0; }
+      15%  { opacity: 1; }
+      75%  { opacity: 1; }
+      100% { opacity: 0; }
+    }
+
+    @media (max-width: 600px) {
+      .shop-panel { width: 100vw; max-height: 100dvh; border-radius: 0; }
+      .shop-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
+      .shop-upgrade-row { grid-template-columns: 1fr auto; }
+      .shop-upgrade-tiers { display: none; }
+    }
   </style>
 </head>
 <body>
@@ -1195,16 +1494,22 @@
     </div>
   </div>
 
-  <!-- MATCH_END: final result + play again -->
-  <div id="match-end-overlay" class="match-overlay hidden">
-    <div class="match-overlay-inner">
-      <div class="match-result-title" id="match-result-title">VICTORY!</div>
-      <div class="round-score-display" id="match-end-score">2 &mdash; 0</div>
-      <button id="match-restart-btn">Play Again</button>
-    </div>
-  </div>
+   <!-- MATCH_END: final result + play again -->
+   <div id="match-end-overlay" class="match-overlay hidden">
+     <div class="match-overlay-inner">
+       <div class="match-result-title" id="match-result-title">VICTORY!</div>
+       <div class="round-score-display" id="match-end-score">2 &mdash; 0</div>
+       <div style="display:flex;gap:12px;margin-top:8px;">
+         <button id="match-shop-btn" style="padding:14px 32px;font-size:16px;font-weight:700;color:#fff;background:#1976d2;border:none;border-radius:8px;cursor:pointer;text-transform:uppercase;letter-spacing:1px;">Shop</button>
+         <button id="match-restart-btn">Play Again</button>
+       </div>
+     </div>
+   </div>
 
-  <!-- LoadoutScreen (t018): pre-match tank + weapon selection -->
+   <!-- ShopMenu (t017) — content rendered by ShopMenu.js via innerHTML -->
+   <div id="shop-menu" class="hidden"></div>
+
+   <!-- LoadoutScreen (t018): pre-match tank + weapon selection -->
   <div id="loadout-overlay" class="hidden">
     <div class="ls-header">
       <div class="ls-title">Loadout</div>

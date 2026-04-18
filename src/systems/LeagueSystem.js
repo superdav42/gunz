@@ -224,7 +224,8 @@ export class LeagueSystem {
    * @returns {number}  1–5.
    */
   get upgradeTierCap() {
-    return this.def.upgradeTierCap;
+    // LeagueDefs schema uses 'tierCap' (t022 compat fix — was 'upgradeTierCap' pre-PR#83)
+    return this.def.tierCap ?? this.def.upgradeTierCap ?? 2;
   }
 
   /**
