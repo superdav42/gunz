@@ -16,6 +16,7 @@ import { AIController } from '../systems/AIController.js';
 import { MatchManager } from './MatchManager.js';
 import { StatsTracker } from '../systems/StatsTracker.js';
 import { EconomySystem } from '../systems/EconomySystem.js';
+import { SaveSystem } from '../systems/SaveSystem.js';
 
 export class Game {
   constructor(canvas) {
@@ -153,12 +154,18 @@ export class Game {
         this.killFeed.addMessage(killer, victim);
       });
 
+    // SaveSystem: load persisted player profile from localStorage (t015).
+    // Must initialise before EconomySystem so we can seed the correct balance.
+    this.save = new SaveSystem();
+    this.save.load();
+
     // StatsTracker: per-round damage dealt, kills, assists, survival (t010)
     this.stats = new StatsTracker();
     this.stats.startRound();
 
-    // EconomySystem: persistent money balance + match reward calculation (t014)
-    this.economy = new EconomySystem({ startingBalance: 0 });
+    // EconomySystem: persistent money balance + match reward calculation (t014).
+    // Seeded from the saved profile so balance carries over between sessions.
+    this.economy = new EconomySystem({ startingBalance: this.save.getProfile().money });
 
     // MatchManager drives the best-of-3 state machine.
     // It registers its own onTeamEliminated hook with TeamManager internally.
@@ -209,6 +216,10 @@ export class Game {
           `[EconomySystem] Match rewards awarded: $${grandTotal}. ` +
           `New balance: $${this.economy.balance}`
         );
+
+        // Persist updated balance to localStorage via SaveSystem (t015).
+        this.save.updateMoney(this.economy.balance);
+        this.save.save();
       });
 
     // AIController drives all 10 AI tanks (team 0 slots 1-5 as allies, team 1 all 6 as enemies)
