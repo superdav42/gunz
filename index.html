@@ -408,6 +408,126 @@
       #touch-controls { display: none; }
     }
 
+    /* === Ability Bar (t045) — bottom-centre, two slots with radial cooldown === */
+    #ability-bar {
+      position: fixed;
+      bottom: 36px;       /* sit above #desktop-hint */
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: flex-end;
+      gap: 12px;
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    /* On mobile the bar sits above the touch-controls zone */
+    @media (pointer: coarse) {
+      #ability-bar { bottom: 192px; }
+    }
+
+    .ab-slot {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3px;
+      position: relative;
+    }
+
+    /* SVG ring wrapper */
+    .ab-ring-wrap {
+      position: relative;
+      width: 64px;
+      height: 64px;
+    }
+
+    .ab-ring-wrap svg {
+      width: 64px;
+      height: 64px;
+    }
+
+    /* Background circle — always visible, dimmed */
+    .ab-bg {
+      fill: none;
+      stroke: rgba(255, 255, 255, 0.12);
+      stroke-width: 5;
+    }
+
+    /* Recharge arc — sweeps clockwise from 12 o'clock */
+    .ab-arc {
+      fill: none;
+      stroke: #4a9eff;
+      stroke-width: 5;
+      stroke-linecap: round;
+      /* transform-origin at svg centre; rotate so arc starts at top */
+      transform-origin: 32px 32px;
+      transform: rotate(-90deg);
+      transition: stroke-dashoffset 0.1s linear;
+    }
+
+    /* Ready state: arc turns bright green */
+    .ab-slot-ready .ab-arc { stroke: #4cff80; }
+
+    /* Empty (no ability on item): ring is very dim */
+    .ab-slot-empty .ab-arc { stroke: rgba(255,255,255,0.08); }
+    .ab-slot-empty .ab-bg  { stroke: rgba(255,255,255,0.06); }
+
+    /* Label text inside the ring (absolute-positioned over svg) */
+    .ab-label-wrap {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1px;
+      pointer-events: none;
+    }
+
+    .ab-label {
+      color: #fff;
+      font-size: 8px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      text-shadow: 1px 1px 3px rgba(0,0,0,0.9);
+      text-align: center;
+      max-width: 52px;
+      overflow: hidden;
+      line-height: 1.1;
+    }
+
+    /* Countdown seconds (shown while on cooldown) */
+    .ab-countdown {
+      color: rgba(255,255,255,0.75);
+      font-size: 13px;
+      font-weight: 700;
+      text-shadow: 1px 1px 3px rgba(0,0,0,0.9);
+    }
+
+    /* "Q" key badge (shown when ready) */
+    .ab-key-hint {
+      color: #4cff80;
+      font-size: 11px;
+      font-weight: 900;
+      text-shadow: 0 0 6px rgba(76,255,128,0.7);
+      letter-spacing: 1px;
+      line-height: 1;
+    }
+
+    /* Slot-type tag below the ring ("TANK" / "WEP") */
+    .ab-type-tag {
+      color: rgba(255,255,255,0.4);
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+
+    /* Dim labels on empty slots */
+    .ab-slot-empty .ab-label,
+    .ab-slot-empty .ab-type-tag { opacity: 0.35; }
+
     /* === LoadoutScreen overlay (t018) === */
     #loadout-overlay {
       position: fixed;
@@ -1590,7 +1710,42 @@
   <div id="kill-feed"></div>
 
   <!-- Desktop hint -->
-  <div id="desktop-hint">WASD to move &middot; Mouse to aim &middot; Click to fire &middot; F = Melee &middot; 1/2 = Weapon slot &middot; Tab = Scoreboard</div>
+  <div id="desktop-hint">WASD to move &middot; Mouse to aim &middot; Click to fire &middot; Q = Ability &middot; F = Melee &middot; 1/2 = Weapon slot &middot; Tab = Scoreboard</div>
+
+  <!-- Ability Bar (t045): two radial-cooldown icons, bottom-centre -->
+  <div id="ability-bar">
+    <!-- Slot 0: tank ability -->
+    <div class="ab-slot ab-slot-empty" data-ability-slot="0">
+      <div class="ab-ring-wrap">
+        <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+          <circle class="ab-bg"  cx="32" cy="32" r="26"/>
+          <circle class="ab-arc" cx="32" cy="32" r="26"/>
+        </svg>
+        <div class="ab-label-wrap">
+          <span class="ab-label">&#8212;</span>
+          <span class="ab-countdown"></span>
+          <span class="ab-key-hint" style="opacity:0">Q</span>
+        </div>
+      </div>
+      <span class="ab-type-tag">Tank</span>
+    </div>
+
+    <!-- Slot 1: weapon ability -->
+    <div class="ab-slot ab-slot-empty" data-ability-slot="1">
+      <div class="ab-ring-wrap">
+        <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+          <circle class="ab-bg"  cx="32" cy="32" r="26"/>
+          <circle class="ab-arc" cx="32" cy="32" r="26"/>
+        </svg>
+        <div class="ab-label-wrap">
+          <span class="ab-label">&#8212;</span>
+          <span class="ab-countdown"></span>
+          <span class="ab-key-hint" style="opacity:0">Q</span>
+        </div>
+      </div>
+      <span class="ab-type-tag">Wep</span>
+    </div>
+  </div>
 
   <!-- PRE_ROUND: countdown before each round -->
   <div id="pre-round-overlay" class="match-overlay">

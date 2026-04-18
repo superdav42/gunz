@@ -8,6 +8,7 @@ import { ParticleSystem } from '../systems/ParticleSystem.js';
 import { TreeSystem } from '../systems/TreeSystem.js';
 import { WreckSystem } from '../systems/WreckSystem.js';
 import { AbilitySystem } from '../systems/AbilitySystem.js';
+import { AbilityBar } from '../ui/AbilityBar.js';
 import { HUD } from '../ui/HUD.js';
 import { KillFeed } from '../ui/KillFeed.js';
 import { MatchOverlay } from '../ui/MatchOverlay.js';
@@ -353,6 +354,10 @@ export class Game {
       projectileSystem: this.projectiles,
     });
 
+    // AbilityBar (t045): two SVG radial-cooldown icons, bottom-centre HUD.
+    // Reads state from this.abilitySystem each frame via AbilitySystem getters.
+    this.abilityBar = new AbilityBar();
+
     this.hud = new HUD();
     this.killFeed = new KillFeed();
     this.scoreboard = new Scoreboard(this.teams);
@@ -498,6 +503,9 @@ export class Game {
       soldierGunId:      this.playerController.soldierGunId,
       soldierMeleeId:    this.playerController.soldierMeleeId,
     });
+
+    // AbilityBar (t045): refresh radial cooldown icons every frame.
+    this.abilityBar.update(this.abilitySystem);
 
     // Scoreboard: show when Tab is held
     this.scoreboard.update(input.tabHeld);
