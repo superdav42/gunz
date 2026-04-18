@@ -10,6 +10,7 @@ import { HUD } from '../ui/HUD.js';
 import { KillFeed } from '../ui/KillFeed.js';
 import { MatchOverlay } from '../ui/MatchOverlay.js';
 import { Scoreboard } from '../ui/Scoreboard.js';
+import { LoadoutScreen } from '../ui/LoadoutScreen.js';
 import { CameraController } from '../systems/CameraController.js';
 import { TeamManager } from './TeamManager.js';
 import { AIController } from '../systems/AIController.js';
@@ -24,6 +25,9 @@ export class Game {
     this.clock = new THREE.Clock();
     this.score = 0;
     this.isRunning = false;
+
+    /** @type {{tank: string, gun: string, melee: string}|null} */
+    this.currentLoadout = null;
 
     this._initRenderer();
     this._initScene();
@@ -237,9 +241,32 @@ export class Game {
     // MatchOverlay binds to DOM overlays in index.html.
     this.matchOverlay = new MatchOverlay(this);
     this.match.onUIUpdate(ui => this.matchOverlay.update(ui));
+
+    // LoadoutScreen (t018): pre-match tank + weapon selection.
+    // Uses SaveSystem for owned items and equipped loadout persistence.
+    this.loadoutScreen = new LoadoutScreen(this.save);
   }
 
+  /**
+   * Show the LoadoutScreen, then begin the game loop once the player deploys.
+   * Call this on fresh game start.
+   */
   start() {
+    this.loadoutScreen.show((selection) => {
+      this.currentLoadout = selection;
+      // Persist the selection so it survives a page reload.
+      this.save.setLoadout(selection.tank, selection.gun, selection.melee);
+      this.save.save();
+      console.info(
+        `[Game] Loadout selected — tank:${selection.tank} ` +
+        `gun:${selection.gun} melee:${selection.melee}`
+      );
+      this._startImmediately();
+    });
+  }
+
+  /** @private Start the render loop without showing the loadout screen. */
+  _startImmediately() {
     this.isRunning = true;
     this.clock.start();
     this._loop();
@@ -378,26 +405,40 @@ export class Game {
   }
 
   /**
-   * Full match restart — resets the state machine and all subsystems.
+   * Full match restart — shows the LoadoutScreen, then resets and relaunches.
    * Called by the "Play Again" button in MatchOverlay.
    */
   restart() {
-    this.score = 0;
-    // Reset match state machine first (no team events should fire during reset)
-    this.match.reset();
-    // Reset StatsTracker for the new match
-    this.stats.reset();
-    // Reset field entities
-    this.teams.reset();
-    this.projectiles.reset();
-    this.particles.reset();
-    this.trees.reset();
-    this.wrecks.reset();
-    this._playerDustTimer = 0;
-    this._enemyDustTimer = 0;
-    this.hud.hideGameOver();
-    this.killFeed.clear();
-    this.start();
+    // Pause the game loop while the loadout screen is shown.
+    this.isRunning = false;
+
+    this.loadoutScreen.show((selection) => {
+      this.currentLoadout = selection;
+      this.save.setLoadout(selection.tank, selection.gun, selection.melee);
+      this.save.save();
+      console.info(
+        `[Game] Loadout updated — tank:${selection.tank} ` +
+        `gun:${selection.gun} melee:${selection.melee}`
+      );
+
+      this.score = 0;
+      // Reset match state machine first (no team events should fire during reset)
+      this.match.reset();
+      // Reset StatsTracker for the new match
+      this.stats.reset();
+      // Reset field entities
+      this.teams.reset();
+      this.projectiles.reset();
+      this.particles.reset();
+      this.trees.reset();
+      this.wrecks.reset();
+      this._playerDustTimer = 0;
+      this._enemyDustTimer = 0;
+      this.hud.hideGameOver();
+      this.killFeed.clear();
+
+      this._startImmediately();
+    });
   }
 
   _onResize() {

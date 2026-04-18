@@ -408,6 +408,241 @@
       #touch-controls { display: none; }
     }
 
+    /* === LoadoutScreen overlay (t018) === */
+    #loadout-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(5, 8, 14, 0.97);
+      z-index: 200;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      pointer-events: auto;
+    }
+
+    #loadout-overlay.hidden {
+      display: none;
+    }
+
+    .ls-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 18px 24px 12px;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+      flex-shrink: 0;
+    }
+
+    .ls-title {
+      color: #fff;
+      font-size: 22px;
+      font-weight: 900;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+    }
+
+    .ls-money {
+      color: #ffd54f;
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: 1px;
+    }
+
+    .ls-money-label {
+      color: rgba(255,255,255,0.5);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-right: 6px;
+    }
+
+    .ls-body {
+      flex: 1;
+      padding: 16px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      min-height: 0;
+    }
+
+    .ls-section-title {
+      color: rgba(255,255,255,0.6);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      margin-bottom: 8px;
+    }
+
+    /* Horizontal scroll grid for tanks */
+    .ls-tank-grid {
+      display: flex;
+      gap: 10px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+    }
+
+    /* Weapon grids — narrower cards, 2 columns on mobile */
+    .ls-weapon-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    /* === Card base === */
+    .ls-card {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 8px;
+      color: #fff;
+      cursor: pointer;
+      text-align: left;
+      transition: border-color 0.15s, background 0.15s;
+      padding: 10px 12px;
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+
+    .ls-card:hover:not(:disabled) {
+      background: rgba(255,255,255,0.1);
+      border-color: rgba(255,255,255,0.3);
+    }
+
+    .ls-card-selected {
+      border-color: #4caf50 !important;
+      background: rgba(76, 175, 80, 0.15) !important;
+    }
+
+    .ls-card-locked {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    /* Tank card — wide portrait */
+    .ls-tank-card {
+      width: 220px;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .ls-tank-swatch {
+      width: 100%;
+      height: 48px;
+      border-radius: 5px;
+    }
+
+    /* Weapon card — compact */
+    .ls-weapon-card {
+      width: 190px;
+    }
+
+    .ls-weapon-icon {
+      font-size: 22px;
+      line-height: 1;
+      flex-shrink: 0;
+    }
+
+    .ls-card-info {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      min-width: 0;
+    }
+
+    .ls-card-name {
+      font-size: 13px;
+      font-weight: 700;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .ls-card-desc {
+      font-size: 11px;
+      color: rgba(255,255,255,0.55);
+      line-height: 1.3;
+    }
+
+    .ls-card-stats {
+      font-size: 11px;
+      color: rgba(255,255,255,0.65);
+      white-space: nowrap;
+    }
+
+    .ls-card-stats b {
+      color: #fff;
+    }
+
+    .ls-card-league {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.45);
+    }
+
+    /* === Footer / deploy bar === */
+    .ls-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 24px 18px;
+      border-top: 1px solid rgba(255,255,255,0.1);
+      flex-shrink: 0;
+      gap: 16px;
+    }
+
+    .ls-summary {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .ls-summary-row {
+      font-size: 12px;
+      color: rgba(255,255,255,0.55);
+    }
+
+    .ls-summary-row b {
+      color: #fff;
+      font-weight: 700;
+    }
+
+    #loadout-deploy-btn {
+      padding: 14px 36px;
+      font-size: 16px;
+      font-weight: 900;
+      color: #fff;
+      background: #4caf50;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    #loadout-deploy-btn:hover {
+      background: #43a047;
+    }
+
+    #loadout-deploy-btn:active {
+      background: #388e3c;
+      transform: scale(0.97);
+    }
+
+    @media (max-width: 600px) {
+      .ls-header  { padding: 12px 14px 10px; }
+      .ls-body    { padding: 10px 12px; gap: 14px; }
+      .ls-footer  { padding: 10px 14px 14px; flex-direction: column; align-items: stretch; }
+      .ls-tank-card  { width: 180px; }
+      .ls-weapon-card { width: 160px; }
+      #loadout-deploy-btn { width: 100%; text-align: center; }
+    }
+
     /* === Scoreboard overlay (t013) === */
     .sb-overlay {
       position: fixed;
@@ -640,6 +875,46 @@
       <div class="match-result-title" id="match-result-title">VICTORY!</div>
       <div class="round-score-display" id="match-end-score">2 &mdash; 0</div>
       <button id="match-restart-btn">Play Again</button>
+    </div>
+  </div>
+
+  <!-- LoadoutScreen (t018): pre-match tank + weapon selection -->
+  <div id="loadout-overlay" class="hidden">
+    <div class="ls-header">
+      <div class="ls-title">Loadout</div>
+      <div class="ls-money">
+        <span class="ls-money-label">Balance</span>
+        <span id="loadout-money">$0</span>
+      </div>
+    </div>
+
+    <div class="ls-body">
+      <!-- Tank selection -->
+      <div>
+        <div class="ls-section-title">Tank Class</div>
+        <div id="loadout-tank-grid" class="ls-tank-grid"></div>
+      </div>
+
+      <!-- Primary weapon selection -->
+      <div>
+        <div class="ls-section-title">Primary Weapon</div>
+        <div id="loadout-gun-grid" class="ls-weapon-grid"></div>
+      </div>
+
+      <!-- Melee weapon selection -->
+      <div>
+        <div class="ls-section-title">Melee Weapon</div>
+        <div id="loadout-melee-grid" class="ls-weapon-grid"></div>
+      </div>
+    </div>
+
+    <div class="ls-footer">
+      <div class="ls-summary">
+        <div class="ls-summary-row">Tank: <b id="loadout-selected-tank">Standard</b></div>
+        <div class="ls-summary-row">Gun: <b id="loadout-selected-gun">Pistol</b></div>
+        <div class="ls-summary-row">Melee: <b id="loadout-selected-melee">Combat Knife</b></div>
+      </div>
+      <button id="loadout-deploy-btn">Deploy</button>
     </div>
   </div>
 
