@@ -6,6 +6,7 @@ import { CollisionSystem } from '../systems/CollisionSystem.js';
 import { ParticleSystem } from '../systems/ParticleSystem.js';
 import { TreeSystem } from '../systems/TreeSystem.js';
 import { WreckSystem } from '../systems/WreckSystem.js';
+import { BuildingSystem } from '../systems/BuildingSystem.js';
 import { HUD } from '../ui/HUD.js';
 import { KillFeed } from '../ui/KillFeed.js';
 import { MatchOverlay } from '../ui/MatchOverlay.js';
@@ -118,6 +119,9 @@ export class Game {
     this.particles = new ParticleSystem(this.scene);
     // TreeSystem spawns tree entities with HP; CollisionSystem handles shell hits
     this.trees = new TreeSystem(this.scene, this.terrain);
+    // BuildingSystem — destructible house/building geometry (t047).
+    // Spawns BUILDING_COUNT stacked-box buildings with independently destructible walls.
+    this.buildings = new BuildingSystem(this.scene, this.terrain);
     // WreckSystem — demolished tanks become cover props on the field.
     // spawnInitial places pre-placed wreck props at map start (t051); these
     // persist across round resets.  Dynamic wrecks (from kills) are added via
@@ -152,6 +156,7 @@ export class Game {
       projectiles: this.projectiles,
       treeSystem: this.trees,
       wrecks: this.wrecks,
+      buildingSystem: this.buildings,
     });
 
     this.collision
@@ -173,6 +178,14 @@ export class Game {
       })
       .onTreeDestroy((pos) => {
         // Full debris burst when tree is felled
+        this.particles.emitTreeDebris(pos);
+      })
+      .onWallHit((pos) => {
+        // Small impact burst to show a shell hit a wall
+        this.particles.emitExplosion(pos, { count: 6, speed: 3, lifetime: 0.3 });
+      })
+      .onWallDestroy((pos) => {
+        // Full debris burst when a wall is smashed or shelled down (t047)
         this.particles.emitTreeDebris(pos);
       })
       .onDamageDealt((tank, amount) => {
@@ -247,6 +260,8 @@ export class Game {
         this.wrecks.reset();
         // Respawn the destructible tree set so the field is full again next round.
         this.trees.reset();
+        // Respawn buildings with fresh walls so every round starts with cover intact.
+        this.buildings.reset();
         // Clear per-tank AI reaction timers so enemies don't carry over mid-fire
         // state from the previous round.
         this.aiController.reset();
@@ -637,6 +652,7 @@ export class Game {
       this.projectiles.reset();
       this.particles.reset();
       this.trees.reset();
+      this.buildings.reset();
       this.wrecks.reset();
       this._playerDustTimer = 0;
       this._enemyDustTimer = 0;
