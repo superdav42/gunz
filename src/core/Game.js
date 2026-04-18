@@ -20,6 +20,8 @@ import { MatchManager } from './MatchManager.js';
 import { StatsTracker } from '../systems/StatsTracker.js';
 import { EconomySystem } from '../systems/EconomySystem.js';
 import { SaveSystem } from '../systems/SaveSystem.js';
+import { LeagueSystem } from '../systems/LeagueSystem.js';
+import { LeagueDisplay } from '../ui/LeagueDisplay.js';
 import { getLeagueDef } from '../data/LeagueDefs.js';
 
 export class Game {
@@ -176,6 +178,18 @@ export class Game {
     this.save = new SaveSystem();
     this.save.load();
 
+    // LeagueSystem: tracks LP and current league in memory (t020).
+    // Seeded from the saved profile so progression carries over between sessions.
+    const savedProfile = this.save.getProfile();
+    this.league = new LeagueSystem({
+      leagueId: savedProfile.leagueId,
+      lp: savedProfile.leaguePoints,
+    });
+
+    // LeagueDisplay: badge + LP bar overlay shown at match end (t023).
+    this.leagueDisplay = new LeagueDisplay();
+    this.leagueDisplay.update(this.league.leagueId, this.league.lp);
+
     // StatsTracker: per-round damage dealt, kills, assists, survival (t010)
     this.stats = new StatsTracker();
     this.stats.startRound();
@@ -239,9 +253,20 @@ export class Game {
           `New balance: $${this.economy.balance}`
         );
 
+        // Apply LP change based on match score (t020/t023).
+        // roundWins = [team0Wins, team1Wins]; team 0 = player.
+        const [pw, ew] = this.match.roundWins;
+        const leagueResult = this.league.applyMatchResult({ playerWins: pw, enemyWins: ew });
+        this.save.updateLeague(this.league.leagueId, this.league.lp);
+
         // Persist updated balance to localStorage via SaveSystem (t015).
         this.save.updateMoney(this.economy.balance);
         this.save.save();
+
+        // Show league display and animate the LP change (t023).
+        this.leagueDisplay.show();
+        // Brief delay lets the MATCH_END overlay render first.
+        setTimeout(() => this.leagueDisplay.animateChange(leagueResult), 600);
       });
 
     // Resolve the player's current league def from the save profile.
@@ -282,9 +307,9 @@ export class Game {
     // Uses SaveSystem for owned items and equipped loadout persistence.
     this.loadoutScreen = new LoadoutScreen(this.save);
 
-    // ShopMenu (t017): between-match shop with 4 tabs.
-    // Opened via the "Shop" button on the match-end overlay.
-    this.shopMenu = new ShopMenu(this.save, this.economy);
+    // ShopMenu (t022): between-match shop with 4 tabs + league gating.
+    // Passes LeagueSystem so the shop can lock items by league and enforce upgrade tier caps.
+    this.shopMenu = new ShopMenu(this.save, this.economy, this.league);
     this.shopMenu.onClose(() => {
       // When the player closes the shop, show the loadout screen for the next match.
       this.isRunning = false;
@@ -403,6 +428,33 @@ export class Game {
       );
     }
 
+    // ---- On-foot soldier melee (t026) ----
+    // playerController.soldier is set by PlayerController (t025) when on foot.
+    const activeSoldier = this.playerController.soldier;
+    if (activeSoldier && input.melee) {
+      // Build the list of valid melee targets: all living enemy tanks.
+      // Living enemy soldiers are added here when t028/t029 introduce AI soldiers.
+      const meleeTargets = [...this.teams.getEnemyTanks()];
+      const hits = activeSoldier.melee(meleeTargets);
+      for (const { target, damage } of hits) {
+        // Record damage in the stats tracker so rewards are counted.
+        this.stats.recordPlayerDamage(target, damage);
+        const hitPos = target.mesh.position.clone();
+        if (target.health <= 0) {
+          this.stats.recordTankKilled(target, true);
+          this.killFeed.addMessage(
+            activeSoldier.name || 'Player',
+            target.name || 'Enemy'
+          );
+          this.teams.killTank(target);
+          this.particles.emitExplosion(hitPos, { count: 25, speed: 8 });
+        } else {
+          // Small impact burst for a non-lethal melee hit.
+          this.particles.emitExplosion(hitPos, { count: 8, speed: 4, lifetime: 0.3 });
+        }
+      }
+    }
+
     // Dust trail while the active entity is moving
     this._playerDustTimer -= dt;
     if (this._playerDustTimer <= 0 && isMoving) {
@@ -510,6 +562,8 @@ export class Game {
    * Called by the "Play Again" button in MatchOverlay.
    */
   restart() {
+    // Hide league display overlay before returning to play.
+    this.leagueDisplay.hide();
     // Pause the game loop while the loadout screen is shown.
     this.isRunning = false;
 
