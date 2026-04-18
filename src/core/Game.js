@@ -15,6 +15,7 @@ import { TeamManager } from './TeamManager.js';
 import { AIController } from '../systems/AIController.js';
 import { MatchManager } from './MatchManager.js';
 import { StatsTracker } from '../systems/StatsTracker.js';
+import { EconomySystem } from '../systems/EconomySystem.js';
 
 export class Game {
   constructor(canvas) {
@@ -156,6 +157,9 @@ export class Game {
     this.stats = new StatsTracker();
     this.stats.startRound();
 
+    // EconomySystem: persistent money balance + match reward calculation (t014)
+    this.economy = new EconomySystem({ startingBalance: 0 });
+
     // MatchManager drives the best-of-3 state machine.
     // It registers its own onTeamEliminated hook with TeamManager internally.
     this.match = new MatchManager(this.teams);
@@ -190,6 +194,18 @@ export class Game {
           `Match totals — Damage: ${matchStats.totals.damageDealt}, ` +
           `K: ${matchStats.totals.kills}, A: ${matchStats.totals.assists}, ` +
           `Rounds survived: ${matchStats.totals.roundsSurvived}`
+        );
+
+        // Calculate and award match rewards via EconomySystem (t014).
+        const { breakdowns, grandTotal } = this.economy.calculateFullMatchRewards({
+          matchStats,
+          roundWins: [...this.match.roundWins],
+          wonMatch: playerWon,
+        });
+        breakdowns.forEach(bd => this.economy.earnReward(bd));
+        console.info(
+          `[EconomySystem] Match rewards awarded: $${grandTotal}. ` +
+          `New balance: $${this.economy.balance}`
         );
       });
 
