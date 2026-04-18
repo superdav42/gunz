@@ -1,11 +1,15 @@
 import * as THREE from 'three';
 import { Terrain } from '../entities/Terrain.js';
+import { VillageGenerator } from '../entities/Village.js';
+import { Soldier } from '../entities/Soldier.js';
 import { InputSystem } from '../systems/InputSystem.js';
 import { ProjectileSystem } from '../systems/ProjectileSystem.js';
 import { CollisionSystem } from '../systems/CollisionSystem.js';
 import { ParticleSystem } from '../systems/ParticleSystem.js';
 import { TreeSystem } from '../systems/TreeSystem.js';
 import { WreckSystem } from '../systems/WreckSystem.js';
+import { AbilitySystem } from '../systems/AbilitySystem.js';
+import { AbilityBar } from '../ui/AbilityBar.js';
 import { HUD } from '../ui/HUD.js';
 import { KillFeed } from '../ui/KillFeed.js';
 import { MatchOverlay } from '../ui/MatchOverlay.js';
@@ -23,6 +27,10 @@ import { SaveSystem } from '../systems/SaveSystem.js';
 import { LeagueSystem } from '../systems/LeagueSystem.js';
 import { LeagueDisplay } from '../ui/LeagueDisplay.js';
 import { getLeagueDef } from '../data/LeagueDefs.js';
+import { TankAbilityEffects } from '../systems/TankAbilityEffects.js';
+import { getTankDef } from '../data/TankDefs.js';
+import { GunDefs, MeleeDefs } from '../data/WeaponDefs.js';
+import { Projectile } from '../entities/Projectile.js';
 
 export class Game {
   constructor(canvas) {
@@ -125,6 +133,11 @@ export class Game {
     this.wrecks = new WreckSystem(this.scene);
     this.wrecks.spawnInitial(this.terrain);
 
+    // VillageGenerator — procedural village clusters with destructible buildings
+    // and dirt paths (t047/t048).  Buildings persist across round resets (the
+    // map layout stays the same; only dynamic wrecks and projectiles are cleared).
+    this.village = new VillageGenerator(this.scene, this.terrain);
+
     // Dust-emission timers
     this._playerDustTimer = 0;
     this._enemyDustTimer = 0;
@@ -152,6 +165,7 @@ export class Game {
       projectiles: this.projectiles,
       treeSystem: this.trees,
       wrecks: this.wrecks,
+      villageSystem: this.village,
     });
 
     this.collision
@@ -180,6 +194,14 @@ export class Game {
       })
       .onTankKilled((tank, byPlayer) => {
         this.stats.recordTankKilled(tank, byPlayer);
+        // Bail the destroyed enemy tank's crew as an AI soldier (t028).
+        // The bail is captured BEFORE enemies.remove() strips the mesh, so
+        // tank.mesh.position is still valid here.
+        this._bailAITankAsSoldier(
+          tank.mesh.position.clone(),
+          tank.mesh.rotation.y,
+          1  // team 1 — only enemy tanks feed CollisionSystem's enemies adapter
+        );
       })
       .onKillFeed((killer, victim) => {
         this.killFeed.addMessage(killer, victim);
@@ -189,6 +211,10 @@ export class Game {
         // Particle count scales with splash radius so bigger weapons feel bigger.
         const count = Math.round(25 + splashRadius * 3);
         this.particles.emitExplosion(pos, { count, speed: 10, lifetime: 1.0 });
+      })
+      .onBuildingWallDestroyed((pos) => {
+        // Medium debris burst when a wall panel is knocked down (t047/t048).
+        this.particles.emitExplosion(pos, { count: 20, speed: 7, lifetime: 0.8 });
       });
 
     // SaveSystem: load persisted player profile from localStorage (t015).
@@ -247,11 +273,18 @@ export class Game {
         this.wrecks.reset();
         // Respawn the destructible tree set so the field is full again next round.
         this.trees.reset();
+        // Reset ability cooldowns so the player starts each round with abilities ready.
+        this.abilitySystem.reset();
         // Clear per-tank AI reaction timers so enemies don't carry over mid-fire
         // state from the previous round.
         this.aiController.reset();
         // Reset PlayerController to tank mode (removes any active soldier mesh).
         this.playerController.reset();
+        // Reset ability cooldowns so both slots are ready at round start (t042).
+        this.abilitySystem.reset();
+        // Cancel active ability effects (shield, jump arc, lockdown) so they
+        // don't carry into the next round. Tank.reset() will clear flags after (t043).
+        this.tankAbilityEffects.reset();
         this._playerDustTimer = 0;
         this._enemyDustTimer = 0;
       })
@@ -320,10 +353,27 @@ export class Game {
     this.aiController.applyLeagueScalingToTeam(1, 0);
 
     // Assign abilities to AI tanks based on the current league (t046).
-    // Gold+: enemy and ally AI tanks at specific slots receive abilities.
-    // Bronze/Silver: all abilityId fields remain null (assignLeagueAbilities no-ops).
-    this.aiController.assignLeagueAbilities(1, 0, 'enemy'); // enemy team, all slots
-    this.aiController.assignLeagueAbilities(0, 1, 'ally');  // ally team, skip player slot 0
+    // Gold+: specific slots get abilities matching VISION.md team compositions.
+    // Bronze/Silver: all abilityId fields remain null (method no-ops on those leagues).
+    this.aiController.assignLeagueAbilities(1, 0, 'enemy'); // all enemy slots
+    this.aiController.assignLeagueAbilities(0, 1, 'ally');  // ally AI, skip player (slot 0)
+
+    // AbilitySystem: cooldown-based Q-key ability framework (t042/t044).
+    // Slots are configured from the player's loadout when a match starts.
+    this.abilitySystem = new AbilitySystem();
+
+    // TankAbilityEffects: actual gameplay effects for the six tank abilities (t043).
+    // Receives the ability ID from AbilitySystem.tryActivateTankAbility() and
+    // executes the corresponding effect (damage, shield, jump, lockdown, etc.).
+    this.tankAbilityEffects = new TankAbilityEffects({
+      terrain:          this.terrain,
+      particles:        this.particles,
+      projectileSystem: this.projectiles,
+    });
+
+    // AbilityBar (t045): two SVG radial-cooldown icons, bottom-centre HUD.
+    // Reads state from this.abilitySystem each frame via AbilitySystem getters.
+    this.abilityBar = new AbilityBar();
 
     this.hud = new HUD();
     this.killFeed = new KillFeed();
@@ -360,9 +410,16 @@ export class Game {
         `[Game] Loadout selected — tank:${selection.tank} ` +
         `gun:${selection.gun} melee:${selection.melee}`
       );
-      // Apply on-foot gun selection so soldiers spawn with the chosen weapon (t031).
-      this.playerController.soldierGunId = selection.gun;
-      this._startImmediately();
+      // Apply selected tank class stats + per-class upgrades (t037 + t041).
+       // Upgrades are tracked per class so Heavy armor upgrades don't affect Scout.
+       const classUpgrades = this.save.getProfile().upgrades[selection.tank] || {};
+       this.player.applyClassStats(selection.tank, classUpgrades);
+       // Apply on-foot gun and melee selections so soldiers spawn with chosen weapons (t031/t034).
+       this.playerController.soldierGunId   = selection.gun;
+       this.playerController.soldierMeleeId = selection.melee;
+       // Configure AbilitySystem slots from the chosen loadout (t042).
+       this._applyLoadoutToAbilitySystem(selection);
+       this._startImmediately();
     });
   }
 
@@ -388,6 +445,9 @@ export class Game {
 
     // Gate all combat logic on an active round.
     if (this.match.isActive()) {
+      // Ability cooldowns tick independently of player entity.
+      this.abilitySystem.update(dt);
+
       // Player input — PlayerController delegates to tank or soldier depending on mode.
       this._updatePlayer(input, dt);
 
@@ -398,6 +458,18 @@ export class Game {
 
       // AIController: drives all ally (team 0, slots 1-5) and enemy AI tanks
       this.aiController.update(dt);
+
+      // AI soldier behavior (t028): bailed enemy crew advance, take cover, shoot
+      const playerSoldier = this.playerController.mode === 'soldier'
+        ? this.playerController.soldier
+        : null;
+      this.aiController.updateSoldiers(dt, this._getCoverPositions(), playerSoldier);
+
+      // Check AI soldier hits from player projectiles (t028)
+      this._checkAISoldierHits();
+
+      // Clean up AI soldiers whose HP reached 0 this frame
+      this._cleanupDeadAISoldiers();
 
       // Update each alive tank's fire cooldown
       for (const tank of this.teams.getAllLivingTanks()) {
@@ -417,6 +489,13 @@ export class Game {
         }
       }
 
+      // AbilitySystem: advance cooldown timers (t042).
+      this.abilitySystem.update(dt);
+
+      // TankAbilityEffects: advance timed effects (jump arcs, shield/lockdown timers,
+      // barrage queues) and apply AoE on landing (t043).
+      this.tankAbilityEffects.update(dt, this.teams.getAllLivingTanks());
+
       // StatsTracker: advance survival timer only during active round
       this.stats.update(dt);
     }
@@ -430,12 +509,20 @@ export class Game {
     // maxHealth is passed so the bar fills to 100 % at full soldier HP (30), not 30 %.
     const roundStats = this.stats.getCurrentRoundStats();
     this.hud.update({
-      score:     this.score,
-      health:    this.playerController.health,
-      maxHealth: this.playerController.maxHealth,
-      ammo:      this.playerController.ammo,
-      stats:     roundStats,
+      score:             this.score,
+      health:            this.playerController.health,
+      maxHealth:         this.playerController.maxHealth,
+      ammo:              this.playerController.ammo,
+      stats:             roundStats,
+      // Weapon slot display (t034): only relevant in soldier mode.
+      soldierMode:       this.playerController.mode === 'soldier',
+      activeWeaponSlot:  this.playerController.activeWeaponSlot,
+      soldierGunId:      this.playerController.soldierGunId,
+      soldierMeleeId:    this.playerController.soldierMeleeId,
     });
+
+    // AbilityBar (t045): refresh radial cooldown icons every frame.
+    this.abilityBar.update(this.abilitySystem);
 
     // Scoreboard: show when Tab is held
     this.scoreboard.update(input.tabHeld);
@@ -456,6 +543,18 @@ export class Game {
     // Emit muzzle flash once per shot (using the first projectile for position/direction).
     // Shotgun fires 8 pellets simultaneously — a single flash for the burst is correct.
     if (newProjectiles.length > 0) {
+      // Apply Overcharge modifier before adding projectiles to the system (t044).
+      // Overcharge: next shot deals 3× damage with a wider effective splash.
+      if (this.abilitySystem.pendingNextShotAbility === 'overcharge') {
+        for (const proj of newProjectiles) {
+          proj.damage *= 3;
+          // Wider beam effect: increase the projectile mesh scale slightly for visual cue.
+          proj.mesh.scale.setScalar(2.5);
+        }
+        this.abilitySystem.clearPendingNextShot();
+        console.info('[AbilitySystem] Overcharge consumed — shot damage tripled.');
+      }
+
       const first = newProjectiles[0];
       this.particles.emitMuzzleFlash(
         first.mesh.position.clone(),
@@ -466,29 +565,64 @@ export class Game {
       }
     }
 
-    // ---- On-foot soldier melee (t026) ----
-    // playerController.soldier is set by PlayerController (t025) when on foot.
+    // ---- On-foot soldier melee (t026/t034) ----
+    // Melee swings are triggered by:
+    //   a) F key / middle-click (input.melee) — always swings regardless of active slot.
+    //   b) Fire button (input.fire) when the melee slot is active (activeWeaponSlot === 'melee').
+    // Case (b): PlayerController._updateSoldierMode suppresses gun fire in melee slot,
+    // but hit detection needs the full target list so it is resolved here in Game.js.
     const activeSoldier = this.playerController.soldier;
-    if (activeSoldier && input.melee) {
-      // Build the list of valid melee targets: all living enemy tanks.
-      // Living enemy soldiers will be added here when t028 introduces AI soldiers.
-      const meleeTargets = [...this.teams.getEnemyTanks()];
+    const meleeSlotFire = this.playerController.mode === 'soldier' &&
+      this.playerController.activeWeaponSlot === 'melee' &&
+      input.fire;
+    if (activeSoldier && (input.melee || meleeSlotFire)) {
+      // Melee targets: living enemy tanks + living AI enemy soldiers (t028)
+      const aiSoldiers = this.aiController.getActiveSoldiers()
+        .filter(s => s.teamId === 1 && s.health > 0);
+      const meleeTargets = [...this.teams.getEnemyTanks(), ...aiSoldiers];
       const hits = activeSoldier.melee(meleeTargets);
-      for (const { target, damage } of hits) {
-        // Record damage in the stats tracker so rewards are counted.
-        this.stats.recordPlayerDamage(target, damage);
-        const hitPos = target.mesh.position.clone();
-        if (target.health <= 0) {
-          this.stats.recordTankKilled(target, true);
-          this.killFeed.addMessage(
-            activeSoldier.name || 'Player',
-            target.name || 'Enemy'
-          );
-          this.teams.killTank(target);
-          this.particles.emitExplosion(hitPos, { count: 25, speed: 8 });
-        } else {
-          // Small impact burst for a non-lethal melee hit.
-          this.particles.emitExplosion(hitPos, { count: 8, speed: 4, lifetime: 0.3 });
+      this._processMeleeHits(activeSoldier, hits);
+    }
+
+    // ---- Melee weapon ability — Dash Strike (t033) ----
+    // Q key activates the equipped melee weapon's special ability.
+    if (activeSoldier && input.ability && activeSoldier.canActivateMeleeAbility()) {
+      // Include AI soldiers as ability targets (same set as regular melee).
+      const aiSoldiersAbility = this.aiController.getActiveSoldiers()
+        .filter(s => s.teamId === 1 && s.health > 0);
+      const abilityTargets = [...this.teams.getEnemyTanks(), ...aiSoldiersAbility];
+      const abilityHits = activeSoldier.activateMeleeAbility(abilityTargets);
+
+      // Snap the soldier's Y to terrain after the lunge repositions them.
+      const soldierPos = activeSoldier.mesh.position;
+      soldierPos.y = this.terrain.getHeightAt(soldierPos.x, soldierPos.z);
+
+      this._processMeleeHits(activeSoldier, abilityHits);
+
+      // Particle burst at landing position to signal the ability fired.
+      if (abilityHits.length === 0) {
+        this.particles.emitExplosion(soldierPos.clone(), { count: 12, speed: 6, lifetime: 0.4 });
+      }
+    }
+
+    // ---- Ability activation — Q key (t042/t043/t044) ----
+    // Tank mode   → tank ability slot (cooldown managed by AbilitySystem,
+    //               effect executed by TankAbilityEffects — t043).
+    // Soldier mode → weapon ability slot (effects: t044, implemented below).
+    if (input.ability) {
+      if (this.playerController.mode === 'tank') {
+        const activated = this.abilitySystem.tryActivateTankAbility();
+        if (activated) {
+          // Execute the real gameplay effect (t043).
+          const allTanks = this.teams.getAllLivingTanks();
+          this.tankAbilityEffects.execute(activated, this.player, allTanks);
+        }
+      } else if (this.playerController.soldier) {
+        const activated = this.abilitySystem.tryActivateWeaponAbility();
+        if (activated) {
+          // Execute real weapon ability effects (t044):
+          // clusterBomb, lockOn, overcharge, novaBlast, dashStrike.
+          this._executeWeaponAbility(activated, this.playerController.soldier);
         }
       }
     }
@@ -498,6 +632,160 @@ export class Game {
     if (this._playerDustTimer <= 0 && isMoving) {
       this._playerDustTimer = 0.15;
       this.particles.emitDust(this.playerController.mesh.position);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // On-foot AI helpers (t028)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Spawn an AI soldier at the given world position when an AI tank is destroyed.
+   * The soldier is registered with AIController and added to the scene.
+   * The tank slot is already marked dead (teams.killTank was called by CollisionSystem);
+   * the soldier fights on independently — its death is tracked separately.
+   *
+   * @param {THREE.Vector3} pos    — tank's last world position (cloned before mesh removal)
+   * @param {number}        rotY   — tank's Y rotation at death
+   * @param {number}        teamId — 0 = ally, 1 = enemy
+   */
+  _bailAITankAsSoldier(pos, rotY, teamId) {
+    const y = this.terrain.getHeightAt(pos.x, pos.z);
+    const soldier = new Soldier({
+      isPlayer: false,
+      teamId,
+      name: teamId === 1 ? 'Enemy Crew' : 'Ally Crew',
+    });
+    soldier.mesh.position.set(pos.x, y, pos.z);
+    soldier.mesh.rotation.y = rotY;
+    this.scene.add(soldier.mesh);
+
+    // Register with TeamManager BEFORE the tank slot is killed (killTank fires
+    // after onTankKilled returns).  This prevents a false team-elimination signal
+    // if this was the last tank: isTeamEliminated() will find the live soldier and
+    // correctly defer the elimination callback until the soldier also dies (t029).
+    this.teams.registerSoldier(soldier, teamId);
+
+    this.aiController.addSoldier(soldier, teamId, this.scene);
+    console.info(`[Game] AI tank destroyed — crew bailed as soldier (team ${teamId}).`);
+  }
+
+  /**
+   * Build a flat list of cover obstacle positions from wrecks and living trees.
+   * Passed to AIController.updateSoldiers() each frame so soldiers can seek cover.
+   *
+   * @returns {Array<{x: number, z: number}>}
+   */
+  _getCoverPositions() {
+    // Wrecks (static + dynamic)
+    const positions = this.wrecks.obstacles.map(o => ({ x: o.x, z: o.z }));
+
+    // Living trees also provide cover (they can be destroyed, but until then they block)
+    for (const tree of this.trees.trees) {
+      if (tree.alive && tree.group) {
+        positions.push({ x: tree.group.position.x, z: tree.group.position.z });
+      }
+    }
+
+    return positions;
+  }
+
+  /**
+   * Check whether any player-owned projectile has hit an AI soldier this frame.
+   * Mirrors _checkSoldierHit() but operates on AI-controlled soldiers.
+   * Hit radius is tighter than tanks to reflect the capsule silhouette.
+   */
+  _checkAISoldierHits() {
+    const aiSoldiers = this.aiController.getActiveSoldiers();
+    if (aiSoldiers.length === 0) return;
+
+    const projectiles = this.projectiles.active;
+    const HIT_RADIUS = 1.2;
+
+    for (let i = projectiles.length - 1; i >= 0; i--) {
+      const p = projectiles[i];
+      if (!p.isPlayerOwned) continue; // only player bullets hit AI soldiers here
+
+      for (let si = aiSoldiers.length - 1; si >= 0; si--) {
+        const soldier = aiSoldiers[si];
+        if (soldier.health <= 0) continue; // already dead this frame
+
+        const dist = p.mesh.position.distanceTo(soldier.mesh.position);
+        if (dist < HIT_RADIUS) {
+          const hitPos = p.mesh.position.clone();
+          const actualDamage = Math.min(p.damage, soldier.health);
+          if (p.ownerTank) p.ownerTank.recordDamage(actualDamage);
+          soldier.takeDamage(p.damage);
+          this.projectiles.remove(i);
+          this.particles.emitExplosion(hitPos, { count: 6, speed: 3, lifetime: 0.3 });
+
+          if (soldier.health <= 0) {
+            // Soldier is dead — cleanup handled in _cleanupDeadAISoldiers()
+            const killerName = p.ownerTank ? (p.ownerTank.name || 'Player') : 'Player';
+            this.killFeed.addMessage(killerName, soldier.name || 'Enemy Crew');
+          }
+          break; // projectile consumed
+        }
+      }
+    }
+  }
+
+  /**
+   * Remove any AI soldiers whose HP reached 0 this frame.
+   * Called once per game-loop tick after updateSoldiers() and _checkAISoldierHits().
+   * Removes mesh from scene and unregisters the soldier from AIController.
+   */
+  _cleanupDeadAISoldiers() {
+    const aiSoldiers = this.aiController.getActiveSoldiers();
+    for (let i = aiSoldiers.length - 1; i >= 0; i--) {
+      const soldier = aiSoldiers[i];
+      if (soldier.health <= 0) {
+        const deathPos = soldier.mesh.position.clone();
+        // teams.killSoldier handles mesh removal and fires the team-elimination
+        // check (t029).  It must be called before aiController.removeSoldier so
+        // the round-end callback fires while the soldier is still in the AIController
+        // list (removeSoldier is purely internal bookkeeping).
+        this.teams.killSoldier(soldier);
+        this.aiController.removeSoldier(soldier);
+        this.particles.emitExplosion(deathPos, { count: 10, speed: 5, lifetime: 0.5 });
+        console.info('[Game] AI soldier destroyed.');
+      }
+    }
+  }
+
+  /**
+   * Apply a batch of melee hit results: record stats, emit particles, kill targets.
+   * Shared by the regular melee swing and the Dash Strike ability (t033).
+   * Handles both Tank kills and Soldier kills (t028 AI soldiers).
+   *
+   * @param {import('../entities/Soldier.js').Soldier} attacker
+   * @param {Array<{target: object, damage: number}>} hits
+   * @private
+   */
+  _processMeleeHits(attacker, hits) {
+    for (const { target, damage } of hits) {
+      this.stats.recordPlayerDamage(target, damage);
+      const hitPos = target.mesh.position.clone();
+      if (target.health <= 0) {
+        this.killFeed.addMessage(
+          attacker.name || 'Player',
+          target.name || 'Enemy'
+        );
+        if (target instanceof Soldier) {
+          // Melee killed an AI soldier — use killSoldier for mesh removal and
+          // round-end check; remove from AIController tracking too.
+          this.teams.killSoldier(target);
+          this.aiController.removeSoldier(target);
+        } else {
+          // Melee killed a tank.
+          this.stats.recordTankKilled(target, true);
+          this.teams.killTank(target);
+        }
+        this.particles.emitExplosion(hitPos, { count: 25, speed: 8 });
+      } else {
+        // Small impact burst for a non-lethal hit.
+        this.particles.emitExplosion(hitPos, { count: 8, speed: 4, lifetime: 0.3 });
+      }
     }
   }
 
@@ -600,6 +888,163 @@ export class Game {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Weapon ability effects (t044)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Execute a weapon ability effect.
+   *
+   * Each ability description from VISION.md §Abilities:
+   *   clusterBomb — Grenade Launcher: fire 5 mini-grenades in a spread arc
+   *   lockOn      — Rocket Launcher:  fire a homing rocket at the nearest enemy
+   *   overcharge  — Railgun:          next shot deals 3× damage (handled in _updatePlayer)
+   *   novaBlast   — Plasma Cannon:    AoE explosion centred on the player soldier
+   *   dashStrike  — Energy Blade:     lunge 10 m forward, melee everything in path
+   *
+   * @param {string}                                       abilityId
+   * @param {import('../entities/Soldier.js').Soldier}    soldier
+   * @private
+   */
+  _executeWeaponAbility(abilityId, soldier) {
+    switch (abilityId) {
+      case 'clusterBomb': {
+        // Fire 5 mini-grenades in a 48° spread arc (−24°, −12°, 0°, +12°, +24°).
+        const muzzlePos = new THREE.Vector3();
+        soldier.muzzle.getWorldPosition(muzzlePos);
+        const baseDir = new THREE.Vector3();
+        soldier.muzzle.getWorldDirection(baseDir);
+
+        const SPREAD_STEPS = [-24, -12, 0, 12, 24]; // degrees
+        for (const angleDeg of SPREAD_STEPS) {
+          const dir = baseDir.clone().applyAxisAngle(
+            new THREE.Vector3(0, 1, 0),
+            THREE.MathUtils.degToRad(angleDeg)
+          );
+          // Add slight upward angle for arc behaviour
+          dir.y += 0.3;
+          dir.normalize();
+
+          const proj = new Projectile({
+            position:      muzzlePos.clone(),
+            direction:     dir,
+            isPlayerOwned: true,
+            ownerTank:     soldier,
+            speed:         22,
+            damage:        22,    // ~40 % of base grenade damage per fragment
+            splashRadius:  3,
+            isArc:         true,
+            isExplosive:   true,
+          });
+          this.projectiles.add(proj);
+        }
+
+        this.particles.emitMuzzleFlash(muzzlePos.clone(), baseDir.clone());
+        console.info('[AbilitySystem] Cluster Bomb fired — 5 mini-grenades launched.');
+        break;
+      }
+
+      case 'lockOn': {
+        // Find the nearest living enemy to home onto.
+        const soldierPos = soldier.mesh.position;
+        let nearestEnemy = null;
+        let nearestDist  = Infinity;
+
+        for (const tank of this.teams.getEnemyTanks()) {
+          if (tank.health <= 0) continue;
+          const d = soldierPos.distanceTo(tank.mesh.position);
+          if (d < nearestDist) {
+            nearestDist  = d;
+            nearestEnemy = tank;
+          }
+        }
+
+        // Fire the homing rocket from the muzzle toward the target (or straight if none).
+        const muzzlePos2 = new THREE.Vector3();
+        soldier.muzzle.getWorldPosition(muzzlePos2);
+        const fireDir = new THREE.Vector3();
+        if (nearestEnemy) {
+          fireDir.subVectors(nearestEnemy.mesh.position, muzzlePos2).normalize();
+        } else {
+          soldier.muzzle.getWorldDirection(fireDir);
+        }
+
+        const homingProj = new Projectile({
+          position:      muzzlePos2.clone(),
+          direction:     fireDir,
+          isPlayerOwned: true,
+          ownerTank:     soldier,
+          speed:         55,
+          damage:        100,   // rocket launcher base (VISION.md: 90 + 10 % lock bonus)
+          splashRadius:  8,
+          isArc:         false,
+          isExplosive:   true,
+          homingTarget:  nearestEnemy,  // null = flies straight (no target in range)
+          homingStrength: 4,
+        });
+        this.projectiles.add(homingProj);
+
+        this.particles.emitMuzzleFlash(muzzlePos2.clone(), fireDir.clone());
+        const targetName = nearestEnemy ? 'nearest enemy' : 'no target';
+        console.info(`[AbilitySystem] Lock-On rocket fired — homing on ${targetName}.`);
+        break;
+      }
+
+      case 'overcharge':
+        // Overcharge is a "next shot" ability — the flag was already set by
+        // AbilitySystem.tryActivateWeaponAbility(). The effect is applied in
+        // _updatePlayer() when the next projectile(s) are created.
+        console.info('[AbilitySystem] Overcharge primed — next shot deals 3× damage.');
+        break;
+
+      case 'novaBlast': {
+        // AoE explosion centred on the player soldier (radius 12 units per VISION.md).
+        const blastPos = soldier.mesh.position.clone();
+        const BLAST_RADIUS = 12;
+        const BLAST_DAMAGE = 180; // high single-use burst (plasma cannon tier)
+
+        // Damage all living enemy tanks within range.
+        for (const tank of this.teams.getEnemyTanks()) {
+          if (tank.health <= 0) continue;
+          const d = blastPos.distanceTo(tank.mesh.position);
+          if (d > BLAST_RADIUS) continue;
+
+          // Linear falloff from centre: full damage at 0, half at edge.
+          const falloff = 1 - (d / BLAST_RADIUS) * 0.5;
+          const dmg = Math.round(BLAST_DAMAGE * falloff);
+
+          this.stats.recordPlayerDamage(tank, Math.min(dmg, tank.health));
+          tank.takeDamage(dmg);
+
+          if (tank.health <= 0) {
+            const hitPos = tank.mesh.position.clone();
+            this.stats.recordTankKilled(tank, true);
+            this.killFeed.addMessage('Player', tank.name || 'Enemy');
+            this.teams.killTank(tank);
+            this.particles.emitExplosion(hitPos, { count: 35, speed: 10 });
+          }
+        }
+
+        // Large visual blast at player position.
+        this.particles.emitExplosion(blastPos, { count: 60, speed: 14, lifetime: 1.4 });
+        console.info('[AbilitySystem] Nova Blast detonated.');
+        break;
+      }
+
+      case 'dashStrike':
+        // Dash Strike is handled by the melee ability system (t033):
+        // activeSoldier.activateMeleeAbility() in the melee section above.
+        // This case is reached when AbilitySystem assigns dashStrike to the weapon
+        // slot; the cooldown is consumed here but the physical effect fires via the
+        // melee handler earlier in the same frame.
+        console.info('[AbilitySystem] Dash Strike — weapon slot cooldown consumed (effect via melee system).');
+        break;
+
+      default:
+        console.warn(`[AbilitySystem] Unknown weapon ability id: "${abilityId}"`);
+    }
+  }
+
   /**
    * Open the between-match shop (t017).
    * Called from the "Shop" button in MatchOverlay.
@@ -628,8 +1073,14 @@ export class Game {
         `[Game] Loadout updated — tank:${selection.tank} ` +
         `gun:${selection.gun} melee:${selection.melee}`
       );
-      // Apply on-foot gun selection so soldiers spawn with the chosen weapon (t031).
-      this.playerController.soldierGunId = selection.gun;
+      // Re-apply selected tank class stats + per-class upgrades (t037 + t041).
+      const classUpgrades = this.save.getProfile().upgrades[selection.tank] || {};
+      this.player.applyClassStats(selection.tank, classUpgrades);
+      // Apply on-foot gun and melee selections so soldiers spawn with chosen weapons (t031/t034).
+      this.playerController.soldierGunId   = selection.gun;
+      this.playerController.soldierMeleeId = selection.melee;
+      // Reconfigure AbilitySystem for the new loadout (t042).
+      this._applyLoadoutToAbilitySystem(selection);
 
       this.score = 0;
       // Reset match state machine first (no team events should fire during reset)
@@ -638,6 +1089,8 @@ export class Game {
       this.stats.reset();
       // Reset PlayerController to tank mode (clears any active soldier mesh)
       this.playerController.reset();
+      // Cancel any active ability effects before tanks reset their flag fields (t043).
+      this.tankAbilityEffects.reset();
       // Reset field entities
       this.teams.reset();
       this.projectiles.reset();
@@ -651,6 +1104,37 @@ export class Game {
 
       this._startImmediately();
     });
+  }
+
+  /**
+   * Configure AbilitySystem slots from the selected loadout (t042).
+   *
+   * Tank slot   — from TankDefs entry for the chosen tank class.
+   * Weapon slot — from the on-foot weapon that has an ability.  Gun ability
+   *               takes priority; if the gun has no ability the melee weapon
+   *               is checked as a fallback (e.g. Energy Blade → dashStrike).
+   *
+   * @param {{ tank: string, gun: string, melee: string }} selection
+   * @private
+   */
+  _applyLoadoutToAbilitySystem(selection) {
+    const tankDef  = getTankDef(selection.tank);
+    const gunDef   = GunDefs[selection.gun];
+    const meleeDef = MeleeDefs[selection.melee];
+
+    this.abilitySystem.setTankDef(tankDef);
+
+    // Prefer gun ability; fall back to melee ability if gun has none.
+    const weaponDef = (gunDef && gunDef.ability) ? gunDef : (meleeDef || gunDef);
+    if (weaponDef) {
+      this.abilitySystem.setWeaponDef(weaponDef);
+    }
+
+    console.info(
+      `[AbilitySystem] Loadout applied — ` +
+      `tank ability: ${tankDef.ability || 'none'}, ` +
+      `weapon ability: ${this.abilitySystem.weaponAbilityId || 'none'}`
+    );
   }
 
   _onResize() {
