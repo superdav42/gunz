@@ -291,6 +291,9 @@ export class Soldier {
         ownerTank:     this,   // "ownerTank" field is owner-agnostic in Projectile
         speed:         this._gunProjectileSpeed,
         damage:        this._gunDamage,
+        splashRadius:  this._gunSplashRadius,
+        isArc:         this._gunIsArc,
+        isExplosive:   this._gunIsExplosive,
       }));
     }
 
