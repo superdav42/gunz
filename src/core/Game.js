@@ -23,6 +23,7 @@ import { SaveSystem } from '../systems/SaveSystem.js';
 import { LeagueSystem } from '../systems/LeagueSystem.js';
 import { LeagueDisplay } from '../ui/LeagueDisplay.js';
 import { getLeagueDef } from '../data/LeagueDefs.js';
+import { MapLayout } from '../systems/MapLayout.js';
 
 export class Game {
   constructor(canvas) {
@@ -82,6 +83,11 @@ export class Game {
     // Terrain (rocks only — trees managed by TreeSystem)
     this.terrain = new Terrain();
     this.scene.add(this.terrain.mesh);
+
+    // MapLayout (t052) — spawn zone markers, center village, river lanes.
+    // Constructed before TeamManager so building obstacles are ready for
+    // CollisionSystem, and spawn zone pads appear beneath the tanks.
+    this.mapLayout = new MapLayout(this.scene, this.terrain);
 
     // TeamManager creates all 12 tanks and places them on the field.
     // this.player is a convenience alias to teams[0].slots[0].tank.
@@ -152,6 +158,7 @@ export class Game {
       projectiles: this.projectiles,
       treeSystem: this.trees,
       wrecks: this.wrecks,
+      mapLayout: this.mapLayout,
     });
 
     this.collision

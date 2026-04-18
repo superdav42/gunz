@@ -39,14 +39,16 @@ export class CollisionSystem {
    * @param {import('./ProjectileSystem.js').ProjectileSystem} opts.projectiles
    * @param {import('./TreeSystem.js').TreeSystem}             [opts.treeSystem]
    * @param {import('./WreckSystem.js').WreckSystem}           [opts.wrecks]
+   * @param {import('./MapLayout.js').MapLayout}               [opts.mapLayout]
    */
-  constructor({ terrain, player, enemies, projectiles, treeSystem = null, wrecks = null }) {
+  constructor({ terrain, player, enemies, projectiles, treeSystem = null, wrecks = null, mapLayout = null }) {
     this.terrain = terrain;
     this.player = player;
     this.enemies = enemies;
     this.projectiles = projectiles;
     this.treeSystem = treeSystem;
     this.wrecks = wrecks;
+    this.mapLayout = mapLayout;
 
     this._onScoreAdd = null;
     this._onPlayerDeath = null;
@@ -287,6 +289,35 @@ export class CollisionSystem {
       }
     }
 
+    // Projectiles hitting village buildings — absorbed (t052)
+    if (this.mapLayout) {
+      const buildingObs = this.mapLayout.buildingObstacles;
+      for (let i = projectiles.length - 1; i >= 0; i--) {
+        const p = projectiles[i];
+        let hit = false;
+        for (const obs of buildingObs) {
+          const dx = p.mesh.position.x - obs.x;
+          const dz = p.mesh.position.z - obs.z;
+          const distSq = dx * dx + dz * dz;
+          const hitRadius = obs.radius + 0.3;
+          if (distSq < hitRadius * hitRadius) {
+            const hitPos = p.mesh.position.clone();
+            this.projectiles.remove(i);
+            if (p.splashRadius > 0) {
+              this._applySplashToEnemies(p, hitPos, null);
+              this._applySplashToPlayer(p, hitPos, null);
+              if (this._onExplosion) this._onExplosion(hitPos, p.splashRadius);
+            } else {
+              if (this._onHit) this._onHit(hitPos, 'building');
+            }
+            hit = true;
+            break;
+          }
+        }
+        if (hit) continue;
+      }
+    }
+
     // All projectiles vs destructible trees
     if (this.treeSystem) {
       this._checkProjectileTreeCollisions();
@@ -507,6 +538,17 @@ export class CollisionSystem {
         this._resolveObstacleCollision(this.player.mesh, wreckObs);
         for (const enemy of this.enemies.active) {
           this._resolveObstacleCollision(enemy.mesh, wreckObs);
+        }
+      }
+    }
+
+    // Village buildings (t052) block tanks and absorb projectiles
+    if (this.mapLayout) {
+      const buildingObs = this.mapLayout.buildingObstacles;
+      if (buildingObs.length > 0) {
+        this._resolveObstacleCollision(this.player.mesh, buildingObs);
+        for (const enemy of this.enemies.active) {
+          this._resolveObstacleCollision(enemy.mesh, buildingObs);
         }
       }
     }
