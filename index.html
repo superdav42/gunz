@@ -1420,6 +1420,44 @@
       .shop-upgrade-row { grid-template-columns: 1fr auto; }
       .shop-upgrade-tiers { display: none; }
     }
+
+    /* === Weapon slot indicator (t034: on-foot weapon equip/switch) === */
+    #weapon-slots {
+      position: fixed;
+      bottom: 200px; /* above the touch controls area on mobile */
+      left: 16px;
+      display: none; /* hidden; shown via JS when in soldier mode */
+      gap: 8px;
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    /* On desktop (pointer: fine) the touch controls are hidden; move slot bar lower */
+    @media (pointer: fine) {
+      #weapon-slots {
+        bottom: 44px;
+      }
+    }
+
+    .weapon-slot {
+      padding: 5px 10px;
+      background: rgba(0, 0, 0, 0.55);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 5px;
+      color: rgba(255, 255, 255, 0.55);
+      font-size: 12px;
+      font-weight: 700;
+      text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+      letter-spacing: 0.5px;
+      transition: background 0.12s, color 0.12s, border-color 0.12s;
+    }
+
+    /* Highlight the currently active slot */
+    .weapon-slot.weapon-slot-active {
+      background: rgba(255, 255, 255, 0.18);
+      border-color: rgba(255, 255, 255, 0.6);
+      color: #fff;
+    }
   </style>
 </head>
 <body>
@@ -1438,6 +1476,12 @@
       <span class="hud-label">Score</span>
       <span class="hud-value" id="score">0</span>
     </div>
+  </div>
+
+  <!-- Weapon slot indicator (t034: shown in soldier/on-foot mode) -->
+  <div id="weapon-slots">
+    <div class="weapon-slot weapon-slot-active" id="weapon-slot-gun">[1] Pistol</div>
+    <div class="weapon-slot" id="weapon-slot-melee">[2] Combat Knife</div>
   </div>
 
   <!-- Mobile touch controls indicator -->
@@ -1474,7 +1518,7 @@
   <div id="kill-feed"></div>
 
   <!-- Desktop hint -->
-  <div id="desktop-hint">WASD to move &middot; Mouse to aim &middot; Click to fire &middot; Tab = Scoreboard</div>
+  <div id="desktop-hint">WASD to move &middot; Mouse to aim &middot; Click to fire &middot; F = Melee &middot; 1/2 = Weapon slot &middot; Tab = Scoreboard</div>
 
   <!-- PRE_ROUND: countdown before each round -->
   <div id="pre-round-overlay" class="match-overlay">
