@@ -514,15 +514,23 @@ export class AIController {
     // Normalize to [-π, π]
     while (diff > Math.PI) diff -= Math.PI * 2;
     while (diff < -Math.PI) diff += Math.PI * 2;
-    tank.mesh.rotation.y += Math.sign(diff) * Math.min(Math.abs(diff), turnSpeed * dt);
 
-    // --- Advance if outside preferred fire distance ---
-    if (dist > stopDist) {
-      tank.mesh.translateZ(-moveSpeed * dt);
+    // Lockdown Mode (t043): skip all hull movement and turning while active.
+    // The tank remains stationary but still aims and fires at doubled rate.
+    if (!tank.isLockedDown) {
+      tank.mesh.rotation.y += Math.sign(diff) * Math.min(Math.abs(diff), turnSpeed * dt);
+
+      // --- Advance if outside preferred fire distance ---
+      if (dist > stopDist) {
+        tank.mesh.translateZ(-moveSpeed * dt);
+      }
     }
 
     // --- Keep on terrain ---
-    pos.y = this.terrain.getHeightAt(pos.x, pos.z);
+    // Skip terrain-follow while jumping — TankAbilityEffects drives Y (t043).
+    if (!tank.isJumping) {
+      pos.y = this.terrain.getHeightAt(pos.x, pos.z);
+    }
 
     // --- Clamp to arena ---
     pos.x = THREE.MathUtils.clamp(pos.x, -ARENA_BOUND, ARENA_BOUND);
