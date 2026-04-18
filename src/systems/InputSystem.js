@@ -15,7 +15,8 @@ export class InputSystem {
     // Touch joystick state
     this._joystick = { active: false, id: null, startX: 0, startY: 0, dx: 0, dy: 0 };
     this._aimTouch = { active: false, id: null, x: 0, y: 0 };
-    this._fireRequested = false;
+    this._fireRequested  = false;
+    this._meleeRequested = false;
     this._turretAngle = null;
 
     // Mouse aim
@@ -30,6 +31,8 @@ export class InputSystem {
     window.addEventListener('keydown', (e) => {
       this._keys[e.code] = true;
       if (e.code === 'Space') this._fireRequested = true;
+      // F key — on-foot melee attack (VISION.md "Controls" table)
+      if (e.code === 'KeyF') this._meleeRequested = true;
       // Prevent Tab from shifting browser focus while held for the scoreboard
       if (e.code === 'Tab') e.preventDefault();
     });
@@ -47,6 +50,12 @@ export class InputSystem {
     });
     this.canvas.addEventListener('mousedown', (e) => {
       if (e.button === 0) this._fireRequested = true;
+      // Middle mouse button (button 1) — on-foot melee attack
+      if (e.button === 1) this._meleeRequested = true;
+    });
+    // Suppress the context menu on middle-click so the browser doesn't steal the event
+    this.canvas.addEventListener('auxclick', (e) => {
+      if (e.button === 1) e.preventDefault();
     });
   }
 
@@ -142,13 +151,16 @@ export class InputSystem {
         this._keys['ArrowRight'] ||
         (joyActive && jdx > deadzone),
       fire: this._fireRequested,
+      /** One-shot: F key or middle-click triggers an on-foot melee swing. */
+      melee: this._meleeRequested,
       turretAngle: this._turretAngle,
       /** true while Tab is held — shows/hides the scoreboard overlay */
       tabHeld: !!this._keys['Tab'],
     };
 
     // Reset one-shot inputs
-    this._fireRequested = false;
+    this._fireRequested  = false;
+    this._meleeRequested = false;
 
     return state;
   }
