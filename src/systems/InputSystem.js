@@ -18,15 +18,11 @@ export class InputSystem {
     this._fireRequested   = false;
     this._meleeRequested  = false;
     this._reloadRequested = false;
-    /** One-shot: true on the frame Q is pressed (activate ability). */
-    this._abilityRequested = false;
     this._turretAngle = null;
     /** One-shot: true on the frame E is pressed (exit/enter vehicle). */
     this._exitVehicleRequested = false;
-    /** One-shot: true on the frame 1 is pressed — switch to gun slot (t034). */
-    this._switchToGunRequested   = false;
-    /** One-shot: true on the frame 2 is pressed — switch to melee slot (t034). */
-    this._switchToMeleeRequested = false;
+    /** One-shot: true on the frame Q is pressed (activate ability, t045). */
+    this._abilityRequested = false;
 
     // Mouse aim
     this._mouseAim = { active: false, x: 0, y: 0 };
@@ -45,10 +41,7 @@ export class InputSystem {
       if (e.code === 'KeyF') this._meleeRequested = true;
       // R key — manual reload for on-foot gun (t030)
       if (e.code === 'KeyR') this._reloadRequested = true;
-      // 1/2 — weapon slot switching: 1 = gun, 2 = melee (t034)
-      if (e.code === 'Digit1') this._switchToGunRequested   = true;
-      if (e.code === 'Digit2') this._switchToMeleeRequested = true;
-      // Q key — activate ability (tank ability in tank mode, weapon ability in soldier mode) (t042)
+      // Q key — activate ability (t045)
       if (e.code === 'KeyQ') this._abilityRequested = true;
       // Prevent Tab from shifting browser focus while held for the scoreboard
       if (e.code === 'Tab') e.preventDefault();
@@ -172,27 +165,21 @@ export class InputSystem {
       melee: this._meleeRequested,
       /** One-shot: R key triggers a manual reload for the on-foot gun (t030). */
       reload: this._reloadRequested,
-      /** One-shot: Q key activates the context-appropriate ability slot (t042). */
-      ability: this._abilityRequested,
       turretAngle: this._turretAngle,
       /** true while Tab is held — shows/hides the scoreboard overlay */
       tabHeld: !!this._keys['Tab'],
       /** One-shot: true on the frame E was pressed — exit tank or re-enter tank. */
       exitVehicle: this._exitVehicleRequested,
-      /** One-shot: true on the frame 1 was pressed — switch to gun slot (t034). */
-      switchToGun:   this._switchToGunRequested,
-      /** One-shot: true on the frame 2 was pressed — switch to melee slot (t034). */
-      switchToMelee: this._switchToMeleeRequested,
+      /** One-shot: true on the frame Q was pressed — activate ability (t045). */
+      abilityUsed: this._abilityRequested,
     };
 
     // Reset one-shot inputs
-    this._fireRequested          = false;
-    this._meleeRequested         = false;
-    this._reloadRequested        = false;
-    this._abilityRequested       = false;
-    this._exitVehicleRequested   = false;
-    this._switchToGunRequested   = false;
-    this._switchToMeleeRequested = false;
+    this._fireRequested        = false;
+    this._meleeRequested       = false;
+    this._reloadRequested      = false;
+    this._exitVehicleRequested = false;
+    this._abilityRequested     = false;
 
     return state;
   }
