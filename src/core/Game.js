@@ -33,6 +33,16 @@ export class Game {
     /** @type {{tank: string, gun: string, melee: string}|null} */
     this.currentLoadout = null;
 
+    /**
+     * Active player-controlled Soldier instance, or null when the player is in
+     * tank mode.  Set to a Soldier by PlayerController (t025) when the player
+     * bails out of their tank.  The melee handling in _updatePlayer() reads
+     * this field each frame so it activates automatically when t025 sets it.
+     *
+     * @type {import('../entities/Soldier.js').Soldier|null}
+     */
+    this.playerSoldier = null;
+
     this._initRenderer();
     this._initScene();
     this._initSystems();
@@ -424,6 +434,32 @@ export class Game {
           projectile.mesh.position.clone(),
           flashDir
         );
+      }
+    }
+
+    // ---- On-foot soldier melee (t026) ----
+    // Activated when PlayerController (t025) sets this.playerSoldier.
+    if (this.playerSoldier && input.melee) {
+      // Build the list of valid melee targets: all living enemy tanks + living
+      // enemy soldiers (the latter added when t028/t029 introduce AI soldiers).
+      const meleeTargets = [...this.teams.getEnemyTanks()];
+      const hits = this.playerSoldier.melee(meleeTargets);
+      for (const { target, damage } of hits) {
+        // Record damage in the stats tracker so rewards are counted.
+        this.stats.recordPlayerDamage(target, damage);
+        const hitPos = target.mesh.position.clone();
+        if (target.health <= 0) {
+          this.stats.recordTankKilled(target, true);
+          this.killFeed.addMessage(
+            this.playerSoldier.name || 'Player',
+            target.name || 'Enemy'
+          );
+          this.teams.killTank(target);
+          this.particles.emitExplosion(hitPos, { count: 25, speed: 8 });
+        } else {
+          // Small impact burst for a non-lethal melee hit.
+          this.particles.emitExplosion(hitPos, { count: 8, speed: 4, lifetime: 0.3 });
+        }
       }
     }
 

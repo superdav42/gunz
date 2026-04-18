@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { Projectile } from './Projectile.js';
+import { getMeleeDef } from '../data/WeaponDefs.js';
 
 /** Soldier stats — on-foot mode. See VISION.md "On-Foot Mode". */
 const SOLDIER_STATS = {
@@ -43,6 +44,21 @@ export class Soldier {
     /** Movement constants exposed so PlayerController / AIController can read them. */
     this.moveSpeed = SOLDIER_STATS.moveSpeed;
     this.turnSpeed = SOLDIER_STATS.turnSpeed;
+
+    // ---- Melee weapon state (t026) ----
+    /** Active melee weapon id. Defaults to starter combat knife. */
+    this.meleeWeaponId = 'combatKnife';
+    /** Seconds until next melee swing is allowed. */
+    this.meleeCooldown = 0;
+
+    // Initialise melee stats from the default weapon.
+    const _startMelee = getMeleeDef('combatKnife');
+    /** Damage per melee hit (world units). */
+    this._meleeDamage   = _startMelee.damage;
+    /** Sphere radius (world units) checked for hit targets. */
+    this._meleeRange    = _startMelee.range;
+    /** Minimum seconds between swings = 1 / attackRate. */
+    this._meleeInterval = 1 / _startMelee.attackRate;
 
     // Per-round combat stats (mirrors Tank.js for scoreboard compatibility)
     this.kills       = 0;
@@ -149,6 +165,72 @@ export class Soldier {
     });
   }
 
+  // ---------------------------------------------------------------------------
+  // Melee attack (t026)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Equip a melee weapon by id (from MeleeDefs in WeaponDefs.js).
+   * Reloads damage, range, and attack-rate from the definition.
+   * @param {string} weaponId — e.g. 'combatKnife', 'machete', 'warHammer', 'energyBlade'
+   */
+  setMeleeWeapon(weaponId) {
+    const def = getMeleeDef(weaponId);
+    this.meleeWeaponId  = weaponId;
+    this._meleeDamage   = def.damage;
+    this._meleeRange    = def.range;
+    this._meleeInterval = 1 / def.attackRate;
+  }
+
+  /**
+   * @returns {boolean} True when the melee cooldown has elapsed and an attack is ready.
+   */
+  canMelee() {
+    return this.meleeCooldown <= 0;
+  }
+
+  /**
+   * Perform a melee swing.
+   *
+   * Uses a sphere-overlap check: every target whose mesh centre is within
+   * `_meleeRange` world units of this soldier's position is hit.
+   * Damage is capped to the target's remaining HP so recorded values are exact.
+   *
+   * Does nothing and returns [] if `canMelee()` is false.
+   *
+   * @param {Array<{mesh: import('three').Object3D, health: number, takeDamage: (n:number)=>void}>} targets
+   *   Array of potential targets — may contain Tank or Soldier instances.
+   * @returns {Array<{target: object, damage: number}>}
+   *   Array of { target, damage } entries for each entity hit (may be empty).
+   */
+  melee(targets = []) {
+    if (!this.canMelee()) return [];
+
+    this.meleeCooldown = this._meleeInterval;
+
+    const pos   = this.mesh.position;
+    const range = this._meleeRange;
+    const hits  = [];
+
+    for (const target of targets) {
+      if (!target || target.health <= 0) continue;
+
+      const dist = pos.distanceTo(target.mesh.position);
+      if (dist > range) continue;
+
+      // Cap actualDamage to avoid overkill in recorded stats.
+      const actualDamage = Math.min(this._meleeDamage, target.health);
+      target.takeDamage(this._meleeDamage);
+      this.recordDamage(actualDamage);
+      if (target.health <= 0) {
+        this.recordKill();
+      }
+      hits.push({ target, damage: actualDamage });
+    }
+
+    return hits;
+  }
+
   /**
    * Apply incoming damage. HP is clamped to 0.
    * @param {number} amount
@@ -179,13 +261,17 @@ export class Soldier {
     if (this.fireCooldown > 0) {
       this.fireCooldown -= dt;
     }
+    if (this.meleeCooldown > 0) {
+      this.meleeCooldown -= dt;
+    }
   }
 
   /** Reset to full health / stats for round start. */
   reset() {
-    this.health       = this.maxHealth;
-    this.fireCooldown = 0;
-    this.kills        = 0;
-    this.damageDealt  = 0;
+    this.health        = this.maxHealth;
+    this.fireCooldown  = 0;
+    this.meleeCooldown = 0;
+    this.kills         = 0;
+    this.damageDealt   = 0;
   }
 }
