@@ -26,7 +26,9 @@ import { EconomySystem } from '../systems/EconomySystem.js';
 import { SaveSystem } from '../systems/SaveSystem.js';
 import { LeagueSystem } from '../systems/LeagueSystem.js';
 import { LeagueDisplay } from '../ui/LeagueDisplay.js';
+import { MainMenu } from '../ui/MainMenu.js';
 import { getLeagueDef } from '../data/LeagueDefs.js';
+import { SoundSystem } from '../systems/SoundSystem.js';
 import { MapLayout } from '../systems/MapLayout.js';
 import { TankAbilityEffects } from '../systems/TankAbilityEffects.js';
 import { FlameSystem } from '../systems/FlameSystem.js';
@@ -105,10 +107,12 @@ export class Game {
 
     // PlayerController manages tank vs. on-foot soldier mode for the human player.
     // It exposes a `mesh` getter so CameraController always follows the active entity.
+    // mapLayout passed so river/mud zone speed penalties are applied (t050).
     this.playerController = new PlayerController({
-      tank:    this.player,
-      scene:   this.scene,
-      terrain: this.terrain,
+      tank:      this.player,
+      scene:     this.scene,
+      terrain:   this.terrain,
+      mapLayout: this.mapLayout,
     });
 
     // t029 — Register / unregister the player's soldier with TeamManager so the
@@ -125,6 +129,12 @@ export class Game {
   }
 
   _initSystems() {
+    // SoundSystem (t056): Howler.js-based audio — must be created before any
+    // systems that may fire sound events during their own initialisation.
+    this.sound = new SoundSystem();
+    // Attach UI click sounds to all present and future DOM buttons globally.
+    this.sound.bindUIClicks();
+
     this.input = new InputSystem(this.canvas);
     // CameraController uses target.mesh; PlayerController exposes that getter
     // so the camera follows whichever entity the player is currently controlling.
@@ -148,6 +158,9 @@ export class Game {
     // Dust-emission timers
     this._playerDustTimer = 0;
     this._enemyDustTimer = 0;
+
+    /** Track whether the player was moving last frame to detect start/stop. */
+    this._playerWasMoving = false;
 
     /**
      * CollisionSystem compatibility adapter.
@@ -181,9 +194,13 @@ export class Game {
       .onPlayerDeath(() => this._onPlayerTankDestroyed())
       .onHit((pos) => {
         this.particles.emitExplosion(pos, { count: 15, speed: 6, lifetime: 0.6 });
+        // Play impact sound for non-lethal shell hits (t056).
+        this.sound.playImpact();
       })
       .onKill((pos, owner, tankData) => {
         this.particles.emitExplosion(pos, { count: 35, speed: 10 });
+        // Play explosion sound whenever any tank is destroyed (t056).
+        this.sound.playExplosion();
         // Leave a wreck at the tank's last position as indestructible cover
         if (tankData) {
           this.wrecks.add(tankData.position, tankData.rotationY);
@@ -219,6 +236,8 @@ export class Game {
         // Particle count scales with splash radius so bigger weapons feel bigger.
         const count = Math.round(25 + splashRadius * 3);
         this.particles.emitExplosion(pos, { count, speed: 10, lifetime: 1.0 });
+        // Explosive rounds also play the explosion sound (t056).
+        this.sound.playExplosion();
       })
       .onBuildingWallDestroyed((pos) => {
         // Medium debris burst when a wall panel is knocked down (t047/t048).
@@ -347,12 +366,14 @@ export class Game {
 
     // AIController drives all 10 AI tanks (team 0 slots 1-5 as allies, team 1 all 6 as enemies).
     // Passes the league def so enemy AI uses the correct difficulty multipliers.
+    // mapLayout passed so river/mud zone speed penalties apply to AI movement (t050).
     this.aiController = new AIController(
       this.teams,
       this.projectiles,
       this.particles,
       this.terrain,
-      currentLeagueDef
+      currentLeagueDef,
+      this.mapLayout
     );
 
     // Apply HP and damage multipliers to the enemy team (team 1) based on league.
@@ -360,6 +381,13 @@ export class Game {
     // applyLeagueScalingToTeam() must be called once here; values persist through
     // round resets because Tank.reset() restores health to the (already-scaled) maxHealth.
     this.aiController.applyLeagueScalingToTeam(1, 0);
+
+    // Wire AI cannon sounds (t056): play a shot sound when any AI tank fires.
+    // Volume is lower than the player's shot to keep the player's shots perceptually
+    // prominent even when multiple AI tanks fire simultaneously.
+    this.aiController.onShot((_tank, _proj) => {
+      this.sound.playShot();
+    });
 
     // Assign abilities to AI tanks based on the current league (t046).
     // Gold+: specific slots get abilities matching VISION.md team compositions.
@@ -405,16 +433,66 @@ export class Game {
     // Passes LeagueSystem so the shop can lock items by league and enforce upgrade tier caps.
     this.shopMenu = new ShopMenu(this.save, this.economy, this.league);
     this.shopMenu.onClose(() => {
-      // When the player closes the shop, show the loadout screen for the next match.
-      this.isRunning = false;
+      // When the player closes the shop, return to the main menu.
+      this._showMainMenu();
+    });
+
+    // MainMenu (t055): title screen with Play / Shop / Loadout buttons and
+    // league + money display. Shown on first load and after each match ends.
+    this.mainMenu = new MainMenu();
+    this._syncMainMenu();
+  }
+
+  /**
+   * Show the MainMenu, then proceed to LoadoutScreen when the player hits Play.
+   * Call this on fresh game start.
+   */
+  start() {
+    this._showMainMenu();
+  }
+
+  /**
+   * Show the MainMenu with current league + money, wiring up the three buttons.
+   * Called on first load, after shop closes, and after each match ends (via restart).
+   * @private
+   */
+  _showMainMenu() {
+    this._syncMainMenu();
+    this.mainMenu.show({
+      onPlay:    () => this._showLoadoutThenPlay(),
+      onShop:    () => this._openShopFromMenu(),
+      onLoadout: () => this._showLoadoutThenPlay(),
     });
   }
 
   /**
-   * Show the LoadoutScreen, then begin the game loop once the player deploys.
-   * Call this on fresh game start.
+   * Sync the MainMenu's league badge, LP bar and money from current systems.
+   * @private
    */
-  start() {
+  _syncMainMenu() {
+    this.mainMenu.update(
+      this.league.leagueId,
+      this.league.lp,
+      this.economy.balance
+    );
+  }
+
+  /**
+   * Open the shop from the main menu.  When the shop closes, _showMainMenu()
+   * is called via the shopMenu.onClose() callback registered in _initSystems().
+   * @private
+   */
+  _openShopFromMenu() {
+    this.isRunning = false;
+    this.shopMenu.open();
+  }
+
+  /**
+   * Show the LoadoutScreen; on Deploy apply the loadout and start the match.
+   * Shared by the Play and Loadout buttons on the main menu.
+   * @private
+   */
+  _showLoadoutThenPlay() {
     this.loadoutScreen.show((selection) => {
       this.currentLoadout = selection;
       // Persist the selection so it survives a page reload.
@@ -425,17 +503,17 @@ export class Game {
         `gun:${selection.gun} melee:${selection.melee}`
       );
       // Apply selected tank class stats + per-class upgrades (t037 + t041).
-       // Upgrades are tracked per class so Heavy armor upgrades don't affect Scout.
-       const classUpgrades = this.save.getProfile().upgrades[selection.tank] || {};
-       this.player.applyClassStats(selection.tank, classUpgrades);
-       // Apply on-foot gun and melee selections so soldiers spawn with chosen weapons (t031/t034).
-       this.playerController.soldierGunId   = selection.gun;
-       this.playerController.soldierMeleeId = selection.melee;
-       // Configure AbilitySystem slots from the chosen loadout (t042).
-       this._applyLoadoutToAbilitySystem(selection);
-       // Apply the equipped cosmetic skin to the player tank (t053).
-       this.teams.player.applySkin(this.save.getEquippedSkin());
-       this._startImmediately();
+      // Upgrades are tracked per class so Heavy armor upgrades don't affect Scout.
+      const classUpgrades = this.save.getProfile().upgrades[selection.tank] || {};
+      this.player.applyClassStats(selection.tank, classUpgrades);
+      // Apply on-foot gun and melee selections so soldiers spawn with chosen weapons (t031/t034).
+      this.playerController.soldierGunId   = selection.gun;
+      this.playerController.soldierMeleeId = selection.melee;
+      // Configure AbilitySystem slots from the chosen loadout (t042).
+      this._applyLoadoutToAbilitySystem(selection);
+      // Apply the equipped cosmetic skin to the player tank (t053).
+      this.teams.player.applySkin(this.save.getEquippedSkin());
+      this._startImmediately();
     });
   }
 
@@ -525,6 +603,9 @@ export class Game {
     this.particles.update(dt);
     this.cameraController.update(dt);
 
+    // SoundSystem: drain per-frame timers (shot cooldown, etc.) (t056).
+    this.sound.update(dt);
+
     // HUD — pass live round stats for the counters.
     // Use playerController so values reflect the active entity (tank or soldier).
     // maxHealth is passed so the bar fills to 100 % at full soldier HP (30), not 30 %.
@@ -584,7 +665,17 @@ export class Game {
       for (const proj of newProjectiles) {
         this.projectiles.add(proj);
       }
+      // Play cannon fire sound for the player (t056). Rate-limited inside playShot().
+      this.sound.playShot();
     }
+
+    // ---- Engine sound — start/stop based on movement state (t056) ----
+    if (isMoving && !this._playerWasMoving) {
+      this.sound.startEngine();
+    } else if (!isMoving && this._playerWasMoving) {
+      this.sound.stopEngine();
+    }
+    this._playerWasMoving = isMoving;
 
     // ---- On-foot soldier melee (t026/t034) ----
     // Melee swings are triggered by:
@@ -919,9 +1010,11 @@ export class Game {
           this.teams.killTank(target);
         }
         this.particles.emitExplosion(hitPos, { count: 25, speed: 8 });
+        this.sound.playExplosion();
       } else {
         // Small impact burst for a non-lethal hit.
         this.particles.emitExplosion(hitPos, { count: 8, speed: 4, lifetime: 0.3 });
+        this.sound.playImpact();
       }
     }
   }
@@ -1193,56 +1286,47 @@ export class Game {
   }
 
   /**
-   * Full match restart — shows the LoadoutScreen, then resets and relaunches.
-   * Called by the "Play Again" button in MatchOverlay.
+   * Return to the main menu after a match ends.
+   * Called by the "Play Again" button in MatchOverlay (which previously went
+   * straight to the LoadoutScreen).  The main menu lets the player visit the
+   * Shop or Loadout before committing to another match.
    */
   restart() {
-    // Hide league display overlay before returning to play.
+    // Hide league display overlay before returning to the menu.
     this.leagueDisplay.hide();
-    // Pause the game loop while the loadout screen is shown.
+    // Pause the game loop while the main menu is shown.
     this.isRunning = false;
 
-    this.loadoutScreen.show((selection) => {
-      this.currentLoadout = selection;
-      this.save.setLoadout(selection.tank, selection.gun, selection.melee);
-      this.save.save();
-      console.info(
-        `[Game] Loadout updated — tank:${selection.tank} ` +
-        `gun:${selection.gun} melee:${selection.melee}`
-      );
-      // Re-apply selected tank class stats + per-class upgrades (t037 + t041).
-      const classUpgrades = this.save.getProfile().upgrades[selection.tank] || {};
-      this.player.applyClassStats(selection.tank, classUpgrades);
-      // Apply on-foot gun and melee selections so soldiers spawn with chosen weapons (t031/t034).
-      this.playerController.soldierGunId   = selection.gun;
-      this.playerController.soldierMeleeId = selection.melee;
-      // Reconfigure AbilitySystem for the new loadout (t042).
-      this._applyLoadoutToAbilitySystem(selection);
+    // Perform the between-match field reset now, before the next match begins.
+    // This clears stale entities so they don't briefly appear if the renderer
+    // keeps ticking (it doesn't — isRunning is false — but it's cleaner).
+    this._resetFieldForNextMatch();
 
-      this.score = 0;
-      // Reset match state machine first (no team events should fire during reset)
-      this.match.reset();
-      // Reset StatsTracker for the new match
-      this.stats.reset();
-      // Reset PlayerController to tank mode (clears any active soldier mesh)
-      this.playerController.reset();
-      // Cancel any active ability effects before tanks reset their flag fields (t043).
-      this.tankAbilityEffects.reset();
-      // Reset field entities
-      this.teams.reset();
-      // Re-apply skin after reset (handles skin changes between matches) (t053).
-      this.teams.player.applySkin(this.save.getEquippedSkin());
-      this.projectiles.reset();
-      this.particles.reset();
-      this.trees.reset();
-      this.wrecks.reset();
-      this._playerDustTimer = 0;
-      this._enemyDustTimer = 0;
-      this.hud.hideGameOver();
-      this.killFeed.clear();
+    // Go to main menu; Play/Loadout buttons will show LoadoutScreen then _deployAndPlay().
+    this._showMainMenu();
+  }
 
-      this._startImmediately();
-    });
+  /**
+   * Reset all field state in preparation for a new match.
+   * Extracted from restart() so it can be called from _deployAndPlay() too,
+   * where the actual tank/weapon selection has already been applied.
+   * @private
+   */
+  _resetFieldForNextMatch() {
+    this.score = 0;
+    this.match.reset();
+    this.stats.reset();
+    this.playerController.reset();
+    this.tankAbilityEffects.reset();
+    this.teams.reset();
+    this.projectiles.reset();
+    this.particles.reset();
+    this.trees.reset();
+    this.wrecks.reset();
+    this._playerDustTimer = 0;
+    this._enemyDustTimer = 0;
+    this.hud.hideGameOver();
+    this.killFeed.clear();
   }
 
   /**

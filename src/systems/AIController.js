@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { getLeagueDef } from '../data/LeagueDefs.js';
 import { Soldier } from '../entities/Soldier.js';
+import { RIVER_SPEED_TANK, RIVER_SPEED_SOLDIER } from './MapLayout.js';
 
 /**
  * AIController — drives all AI tanks and bailed AI soldiers.
@@ -199,12 +200,20 @@ export class AIController {
    * @param {import('../entities/Terrain.js').Terrain} terrain
    * @param {object} [leagueDef] — LeagueDefs entry for the player's current league.
    *   Defaults to 'bronze' when omitted. Determines enemy AI difficulty.
+   * @param {import('./MapLayout.js').MapLayout|null} [mapLayout] — for river speed penalties (t050).
    */
-  constructor(teamManager, projectileSystem, particleSystem, terrain, leagueDef) {
+  constructor(teamManager, projectileSystem, particleSystem, terrain, leagueDef, mapLayout = null) {
     this.teams = teamManager;
     this.projectiles = projectileSystem;
     this.particles = particleSystem;
     this.terrain = terrain;
+
+    /**
+     * MapLayout reference for river / mud zone speed-penalty queries (t050).
+     * Optional: if null, no penalty is applied.
+     * @type {import('./MapLayout.js').MapLayout|null}
+     */
+    this._mapLayout = mapLayout;
 
     /**
      * Per-tank transient AI state.
@@ -213,6 +222,14 @@ export class AIController {
      * @type {Map<object, {reactionTimer: number, lastTargetUuid: string|null}>}
      */
     this._tankState = new Map();
+
+    /**
+     * Optional callback fired whenever an AI tank fires a projectile.
+     * Signature: (tank: Tank, projectile: Projectile) => void
+     * Set via onShot() — used by SoundSystem to play AI cannon sounds.
+     * @type {((tank: object, projectile: object) => void)|null}
+     */
+    this._onShot = null;
 
     /**
      * Active AI soldiers and their FSM state.
@@ -231,6 +248,18 @@ export class AIController {
   // -------------------------------------------------------------------------
   // Public API — Tank AI
   // -------------------------------------------------------------------------
+
+  /**
+   * Register a callback that fires whenever any AI tank fires a projectile.
+   * Used by SoundSystem to play cannon sounds for AI shots.
+   *
+   * @param {(tank: object, projectile: object) => void} fn
+   * @returns {this}
+   */
+  onShot(fn) {
+    this._onShot = fn;
+    return this;
+  }
 
   /**
    * Switch the AI to a different league difficulty level.
@@ -636,8 +665,10 @@ export class AIController {
 
     // --- Per-class movement stats ---
     // tank.speed and tank.turnRate are set by Tank._applyClassDef from TankDefs.
-    const moveSpeed = tank.speed;
     const turnSpeed = tank.turnRate;
+
+    // River / mud zone speed penalty (t050): AI tanks move at 40% speed in rivers.
+    const moveSpeed = tank.speed * this._riverSpeedFactor(pos, RIVER_SPEED_TANK);
 
     // --- Per-class fire and aggro ranges ---
     // fireRange scales with the tank's effective range stat so Artillery AI
@@ -706,6 +737,8 @@ export class AIController {
             projectile.mesh.position.clone(),
             flashDir
           );
+          // Notify the sound system (if registered) so AI cannon fire is audible.
+          if (this._onShot) this._onShot(tank, projectile);
         }
       }
     } else {
@@ -856,7 +889,8 @@ export class AIController {
     // Move forward until within preferred fire stop distance
     const stopDist = SOLDIER_FIRE_RANGE * SOLDIER_FIRE_STOP;
     if (dist > stopDist) {
-      soldier.mesh.translateZ(-soldier.moveSpeed * dt);
+      // River / mud zone speed penalty (t050): soldiers move at 60% speed in rivers.
+      soldier.mesh.translateZ(-soldier.moveSpeed * this._riverSpeedFactor(pos, RIVER_SPEED_SOLDIER) * dt);
       // Keep on terrain and arena-clamped
       this._clampSoldier(soldier);
     }
@@ -885,8 +919,8 @@ export class AIController {
     const angle = Math.atan2(coverPos.x - pos.x, coverPos.z - pos.z);
     this._rotateSoldierToward(soldier, angle, dt);
 
-    // Move toward cover
-    soldier.mesh.translateZ(-soldier.moveSpeed * dt);
+    // Move toward cover (with river speed penalty if applicable — t050)
+    soldier.mesh.translateZ(-soldier.moveSpeed * this._riverSpeedFactor(pos, RIVER_SPEED_SOLDIER) * dt);
     this._clampSoldier(soldier);
 
     // Suppressive fire at target while retreating (if in range)
@@ -959,6 +993,22 @@ export class AIController {
 
     // Restore original rotation; visual facing handled by _rotateSoldierToward
     soldier.mesh.rotation.y = prevRotY;
+  }
+
+  /**
+   * Return the speed multiplier for a world position.
+   * Returns `riverFactor` when the position is inside a river/mud zone,
+   * otherwise 1.0 (no penalty).  Safe to call when `_mapLayout` is null.
+   *
+   * @param {{x: number, z: number}} pos — world XZ position (mesh.position works)
+   * @param {number} riverFactor — penalty factor (RIVER_SPEED_TANK or RIVER_SPEED_SOLDIER)
+   * @returns {number}
+   * @private
+   */
+  _riverSpeedFactor(pos, riverFactor) {
+    return (this._mapLayout !== null && this._mapLayout.isInRiver(pos.x, pos.z))
+      ? riverFactor
+      : 1.0;
   }
 
   /**
