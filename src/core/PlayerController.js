@@ -33,15 +33,18 @@ const ARENA_BOUND = 90;
 export class PlayerController {
   /**
    * @param {object}  opts
-   * @param {import('../entities/Tank.js').Tank}       opts.tank    — player tank entity
-   * @param {THREE.Scene}                              opts.scene
-   * @param {import('../entities/Terrain.js').Terrain} opts.terrain
+   * @param {import('../entities/Tank.js').Tank}           opts.tank       — player tank entity
+   * @param {THREE.Scene}                                  opts.scene
+   * @param {import('../entities/Terrain.js').Terrain}     opts.terrain
+   * @param {import('../systems/ZoneSystem.js').ZoneSystem} [opts.zoneSystem] — optional movement-penalty zones (t050)
    */
-  constructor({ tank, scene, terrain }) {
-    this.tank    = tank;
-    this.soldier = null;     // Soldier entity when on foot, null otherwise
-    this.scene   = scene;
-    this.terrain = terrain;
+  constructor({ tank, scene, terrain, zoneSystem = null }) {
+    this.tank       = tank;
+    this.soldier    = null;     // Soldier entity when on foot, null otherwise
+    this.scene      = scene;
+    this.terrain    = terrain;
+    /** @type {import('../systems/ZoneSystem.js').ZoneSystem|null} */
+    this.zoneSystem = zoneSystem;
 
     /** @type {'tank' | 'soldier'} */
     this.mode = 'tank';
@@ -298,7 +301,14 @@ export class PlayerController {
 
     // Use the tank's class-defined movement stats (set by Tank._applyClassDef).
     // speed is in world-units/second; turnRate is in radians/second.
-    const moveSpeed = tank.speed;
+    const pos = tank.mesh.position;
+
+    // Apply movement-penalty zone multiplier when the tank is inside a river or
+    // mud zone (t050).  Returns 1.0 when no zoneSystem is set or outside all zones.
+    const zoneMult  = this.zoneSystem
+      ? this.zoneSystem.getSpeedMultiplier(pos.x, pos.z, 'tank')
+      : 1.0;
+    const moveSpeed = tank.speed * zoneMult;
     const turnSpeed = tank.turnRate;
 
     // Lockdown Mode (t043): suppress all hull movement while active.
@@ -321,7 +331,7 @@ export class PlayerController {
     // Terrain follow + arena clamp.
     // Skip terrain-follow while jumping — TankAbilityEffects drives the Y
     // coordinate along the parabolic arc (t043 rocketJump).
-    const pos = tank.mesh.position;
+    // (pos already declared above for zone multiplier calculation)
     if (!tank.isJumping) {
       pos.y = terrain.getHeightAt(pos.x, pos.z);
     }
@@ -351,15 +361,22 @@ export class PlayerController {
     const soldier = this.soldier;
     const terrain = this.terrain;
 
+    // Apply movement-penalty zone multiplier (t050).
+    // Soldiers are slowed less than tanks (60 % vs 40 % of base speed).
+    const pos      = soldier.mesh.position;
+    const zoneMult = this.zoneSystem
+      ? this.zoneSystem.getSpeedMultiplier(pos.x, pos.z, 'soldier')
+      : 1.0;
+    const effectiveMoveSpeed = soldier.moveSpeed * zoneMult;
+
     const moving = input.forward || input.backward;
 
-    if (input.forward)  soldier.mesh.translateZ(-soldier.moveSpeed * dt);
-    if (input.backward) soldier.mesh.translateZ(soldier.moveSpeed * 0.6 * dt);
+    if (input.forward)  soldier.mesh.translateZ(-effectiveMoveSpeed * dt);
+    if (input.backward) soldier.mesh.translateZ(effectiveMoveSpeed * 0.6 * dt);
     if (input.left)     soldier.mesh.rotation.y += soldier.turnSpeed * dt;
     if (input.right)    soldier.mesh.rotation.y -= soldier.turnSpeed * dt;
 
-    // Terrain follow + arena clamp
-    const pos = soldier.mesh.position;
+    // Terrain follow + arena clamp (pos already declared above for zone check)
     pos.y = terrain.getHeightAt(pos.x, pos.z);
     pos.x = THREE.MathUtils.clamp(pos.x, -ARENA_BOUND, ARENA_BOUND);
     pos.z = THREE.MathUtils.clamp(pos.z, -ARENA_BOUND, ARENA_BOUND);

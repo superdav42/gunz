@@ -31,6 +31,7 @@ import { TankAbilityEffects } from '../systems/TankAbilityEffects.js';
 import { getTankDef } from '../data/TankDefs.js';
 import { GunDefs, MeleeDefs } from '../data/WeaponDefs.js';
 import { Projectile } from '../entities/Projectile.js';
+import { ZoneSystem } from '../systems/ZoneSystem.js';
 
 export class Game {
   constructor(canvas) {
@@ -91,6 +92,11 @@ export class Game {
     this.terrain = new Terrain();
     this.scene.add(this.terrain.mesh);
 
+    // ZoneSystem — river and mud movement-penalty zones (t050).
+    // Must be created after terrain (needs getHeightAt for visual plane contouring)
+    // and before TeamManager so zone planes render beneath tanks.
+    this.zones = new ZoneSystem(this.scene, this.terrain);
+
     // TeamManager creates all 12 tanks and places them on the field.
     // this.player is a convenience alias to teams[0].slots[0].tank.
     this.teams = new TeamManager(this.scene, this.terrain);
@@ -98,10 +104,12 @@ export class Game {
 
     // PlayerController manages tank vs. on-foot soldier mode for the human player.
     // It exposes a `mesh` getter so CameraController always follows the active entity.
+    // ZoneSystem is passed so it can apply speed penalties inside rivers/mud (t050).
     this.playerController = new PlayerController({
-      tank:    this.player,
-      scene:   this.scene,
-      terrain: this.terrain,
+      tank:       this.player,
+      scene:      this.scene,
+      terrain:    this.terrain,
+      zoneSystem: this.zones,
     });
 
     // t029 — Register / unregister the player's soldier with TeamManager so the
@@ -338,12 +346,14 @@ export class Game {
 
     // AIController drives all 10 AI tanks (team 0 slots 1-5 as allies, team 1 all 6 as enemies).
     // Passes the league def so enemy AI uses the correct difficulty multipliers.
+    // ZoneSystem is passed so AI tanks are slowed by river/mud zones (t050).
     this.aiController = new AIController(
       this.teams,
       this.projectiles,
       this.particles,
       this.terrain,
-      currentLeagueDef
+      currentLeagueDef,
+      this.zones
     );
 
     // Apply HP and damage multipliers to the enemy team (team 1) based on league.
@@ -351,6 +361,12 @@ export class Game {
     // applyLeagueScalingToTeam() must be called once here; values persist through
     // round resets because Tank.reset() restores health to the (already-scaled) maxHealth.
     this.aiController.applyLeagueScalingToTeam(1, 0);
+
+    // Assign abilities to AI tanks based on the current league (t046).
+    // Gold+: specific slots get abilities matching VISION.md team compositions.
+    // Bronze/Silver: all abilityId fields remain null (method no-ops on those leagues).
+    this.aiController.assignLeagueAbilities(1, 0, 'enemy'); // all enemy slots
+    this.aiController.assignLeagueAbilities(0, 1, 'ally');  // ally AI, skip player (slot 0)
 
     // AbilitySystem: cooldown-based Q-key ability framework (t042/t044).
     // Slots are configured from the player's loadout when a match starts.
