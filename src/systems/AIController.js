@@ -215,6 +215,14 @@ export class AIController {
     this._tankState = new Map();
 
     /**
+     * Optional callback fired whenever an AI tank fires a projectile.
+     * Signature: (tank: Tank, projectile: Projectile) => void
+     * Set via onShot() — used by SoundSystem to play AI cannon sounds.
+     * @type {((tank: object, projectile: object) => void)|null}
+     */
+    this._onShot = null;
+
+    /**
      * Active AI soldiers and their FSM state.
      * Each entry: { soldier, teamId, scene, fsm }.
      * fsm = { state: 'advance'|'cover'|'attack', coverTarget: THREE.Vector3|null,
@@ -231,6 +239,18 @@ export class AIController {
   // -------------------------------------------------------------------------
   // Public API — Tank AI
   // -------------------------------------------------------------------------
+
+  /**
+   * Register a callback that fires whenever any AI tank fires a projectile.
+   * Used by SoundSystem to play cannon sounds for AI shots.
+   *
+   * @param {(tank: object, projectile: object) => void} fn
+   * @returns {this}
+   */
+  onShot(fn) {
+    this._onShot = fn;
+    return this;
+  }
 
   /**
    * Switch the AI to a different league difficulty level.
@@ -698,6 +718,8 @@ export class AIController {
           projectile.mesh.position.clone(),
           flashDir
         );
+        // Notify the sound system (if registered) so AI cannon fire is audible.
+        if (this._onShot) this._onShot(tank, projectile);
       }
     }
   }
