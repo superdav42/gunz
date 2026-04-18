@@ -17,6 +17,8 @@ import { MatchManager } from './MatchManager.js';
 import { StatsTracker } from '../systems/StatsTracker.js';
 import { EconomySystem } from '../systems/EconomySystem.js';
 import { SaveSystem } from '../systems/SaveSystem.js';
+import { LeagueSystem } from '../systems/LeagueSystem.js';
+import { LeagueDisplay } from '../ui/LeagueDisplay.js';
 
 export class Game {
   constructor(canvas) {
@@ -159,6 +161,14 @@ export class Game {
     this.save = new SaveSystem();
     this.save.load();
 
+    // LeagueSystem: tracks LP and current league in memory (t020).
+    // Seeded from the saved profile so progression carries over between sessions.
+    this.league = new LeagueSystem(this.save.getProfile());
+
+    // LeagueDisplay: badge + LP bar overlay shown at match end (t023).
+    this.leagueDisplay = new LeagueDisplay();
+    this.leagueDisplay.update(this.league.leagueId, this.league.lp);
+
     // StatsTracker: per-round damage dealt, kills, assists, survival (t010)
     this.stats = new StatsTracker();
     this.stats.startRound();
@@ -217,9 +227,28 @@ export class Game {
           `New balance: $${this.economy.balance}`
         );
 
+        // Determine LP result key from match score (roundWins = [team0, team1]).
+        // Team 0 = player, team 1 = enemy.
+        const [pw, ew] = this.match.roundWins;
+        let lpResultKey;
+        if (playerWon) {
+          lpResultKey = pw === 2 && ew === 0 ? 'win20' : 'win21';
+        } else {
+          lpResultKey = pw === 0 ? 'lose02' : 'lose12';
+        }
+
+        // Apply LP change and persist to localStorage (t020/t023).
+        const leagueEvent = this.league.applyMatchResult(lpResultKey);
+        this.save.updateLeague(this.league.leagueId, this.league.lp);
+
         // Persist updated balance to localStorage via SaveSystem (t015).
         this.save.updateMoney(this.economy.balance);
         this.save.save();
+
+        // Show league display and animate the LP change (t023).
+        this.leagueDisplay.show();
+        // Brief delay lets the MATCH_END overlay render first.
+        setTimeout(() => this.leagueDisplay.animateChange(leagueEvent), 600);
       });
 
     // AIController drives all 10 AI tanks (team 0 slots 1-5 as allies, team 1 all 6 as enemies)
@@ -383,6 +412,8 @@ export class Game {
    */
   restart() {
     this.score = 0;
+    // Hide league display overlay before returning to play.
+    this.leagueDisplay.hide();
     // Reset match state machine first (no team events should fire during reset)
     this.match.reset();
     // Reset StatsTracker for the new match
