@@ -372,16 +372,16 @@ export class Game {
         `[Game] Loadout selected — tank:${selection.tank} ` +
         `gun:${selection.gun} melee:${selection.melee}`
       );
-      // Apply selected tank class stats to the player tank (t037).
-      // applyClass re-reads TankDefs[selection.tank] so HP, speed, armor, etc.
-      // all reflect the chosen class before the first round starts.
-      this.player.applyClass(selection.tank);
-      // Apply on-foot gun and melee selections so soldiers spawn with chosen weapons (t031/t034).
-      this.playerController.soldierGunId   = selection.gun;
-      this.playerController.soldierMeleeId = selection.melee;
-      // Configure AbilitySystem slots from the chosen loadout (t042).
-      this._applyLoadoutToAbilitySystem(selection);
-      this._startImmediately();
+      // Apply selected tank class stats + per-class upgrades (t037 + t041).
+       // Upgrades are tracked per class so Heavy armor upgrades don't affect Scout.
+       const classUpgrades = this.save.getProfile().upgrades[selection.tank] || {};
+       this.player.applyClassStats(selection.tank, classUpgrades);
+       // Apply on-foot gun and melee selections so soldiers spawn with chosen weapons (t031/t034).
+       this.playerController.soldierGunId   = selection.gun;
+       this.playerController.soldierMeleeId = selection.melee;
+       // Configure AbilitySystem slots from the chosen loadout (t042).
+       this._applyLoadoutToAbilitySystem(selection);
+       this._startImmediately();
     });
   }
 
@@ -863,8 +863,9 @@ export class Game {
         `[Game] Loadout updated — tank:${selection.tank} ` +
         `gun:${selection.gun} melee:${selection.melee}`
       );
-      // Re-apply selected tank class stats to the player tank (t037).
-      this.player.applyClass(selection.tank);
+      // Re-apply selected tank class stats + per-class upgrades (t037 + t041).
+      const classUpgrades = this.save.getProfile().upgrades[selection.tank] || {};
+      this.player.applyClassStats(selection.tank, classUpgrades);
       // Apply on-foot gun and melee selections so soldiers spawn with chosen weapons (t031/t034).
       this.playerController.soldierGunId   = selection.gun;
       this.playerController.soldierMeleeId = selection.melee;

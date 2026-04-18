@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { Projectile } from './Projectile.js';
 import { getTankDef } from '../data/TankDefs.js';
+import { applyTankUpgrades } from '../data/UpgradeDefs.js';
 
 
 /**
@@ -98,6 +99,9 @@ export class Tank {
    * @param {number} [opts.teamId=1]                 — 0 = player team, 1 = enemy team
    * @param {string} [opts.name='']                  — display name shown in kill feed
    * @param {string} [opts.tankClassId='standard']   — tank class key (controls mesh shape + stats)
+   * @param {Object.<string,number>} [opts.upgrades={}]
+   *   Purchased upgrade tiers for this tank class: { [upgradeId]: tier }.
+   *   Applied on top of base class stats via applyClassStats() (t041).
    */
   constructor({
     isPlayer = false,
@@ -106,6 +110,7 @@ export class Tank {
     teamId = 1,
     name = '',
     tankClassId = 'standard',
+    upgrades = {},
   } = {}) {
     this.isPlayer = isPlayer;
     this.teamId = teamId;
@@ -118,9 +123,17 @@ export class Tank {
      */
     this.tankClassId = CLASS_MESH_PARAMS[tankClassId] ? tankClassId : 'standard';
 
-    // Apply combat/movement stats from TankDefs for the resolved class (t037).
+    // Apply combat/movement stats from TankDefs for the resolved class, then
+    // layer the player's purchased upgrades on top (t041).
     this._applyClassDef(this.tankClassId);
-    this.ammo = 30;
+    this.applyClassStats(this.tankClassId, upgrades);
+    /**
+     * Maximum ammo capacity for this tank (after ammoCapacity upgrades).
+     * Set by applyClassStats(); used by reset() to restore the correct cap.
+     */
+    // baseAmmo is set by applyClassStats() — this line guards the default.
+    if (this.baseAmmo === undefined) this.baseAmmo = 30;
+    this.ammo = this.baseAmmo;
     this.fireCooldown = 0;
 
     /**
@@ -368,6 +381,65 @@ export class Tank {
     // so the player's maxHealth stays at the base value.
     this.maxHealth = this.baseHp;
     this.health    = this.maxHealth;
+    // Reset ammo to the base (no upgrades applied here).
+    this.baseAmmo = 30;
+    this.ammo     = this.baseAmmo;
+  }
+
+  /**
+   * Apply tank class stats AND the player's purchased per-class upgrades.
+   *
+   * This is the upgrade-aware version of applyClass().  Upgrades are stored
+   * separately per tank class in SaveSystem so upgrading Heavy armor does not
+   * affect Scout stats (t041).
+   *
+   * Upgrade effects applied here:
+   *   armorPlating → maxHealth / health (+15% HP per tier)
+   *   engine       → speed + turnRate   (+12% per tier)
+   *   mainGun      → damage (+15%) + fireRate reduction (−8% cooldown per tier)
+   *   ammoCapacity → baseAmmo (+10 flat per tier)
+   *
+   * @param {string} classId — tank class key (e.g. 'heavy', 'scout')
+   * @param {Object.<string,number>} [upgrades={}] — { [upgradeId]: tier } for this class
+   */
+  applyClassStats(classId = 'standard', upgrades = {}) {
+    const resolved = CLASS_MESH_PARAMS[classId] ? classId : 'standard';
+    this.tankClassId = resolved;
+    this._applyClassDef(resolved);
+
+    // If there are no upgrades, nothing more to do — _applyClassDef already
+    // set all combat stats from TankDefs.
+    const hasUpgrades = Object.values(upgrades).some(t => t > 0);
+    if (!hasUpgrades) {
+      this.maxHealth = this.baseHp;
+      this.health    = this.maxHealth;
+      this.baseAmmo  = 30;
+      this.ammo      = this.baseAmmo;
+      return;
+    }
+
+    // Build base stats for applyTankUpgrades (mirrors what _applyClassDef set).
+    const def = getTankDef(resolved);
+    const baseStats = {
+      hp:       def.hp,
+      speed:    def.speed,
+      turnRate: def.turnRate,
+      damage:   def.damage,
+      fireRate: def.fireRate,  // shots/sec — converted back to cooldown below
+      ammo:     30,            // base ammo not in TankDefs; always starts at 30
+    };
+
+    const stats = applyTankUpgrades(baseStats, upgrades);
+
+    this.maxHealth = Math.round(stats.hp);
+    this.health    = this.maxHealth;
+    this.baseHp    = this.maxHealth;   // keep in sync for AIController
+    this.damage    = stats.damage;
+    this.fireRate  = 1 / stats.fireRate;  // shots/sec → sec/shot cooldown
+    this.speed     = stats.speed;
+    this.turnRate  = stats.turnRate;
+    this.baseAmmo  = Math.max(1, Math.round(stats.ammo));
+    this.ammo      = this.baseAmmo;
   }
 
   // ---------------------------------------------------------------------------
@@ -445,7 +517,10 @@ export class Tank {
 
   reset() {
     this.health = this.maxHealth;
-    this.ammo = 30;
+    // Restore to the upgrade-adjusted ammo cap so ammoCapacity upgrades persist
+    // across round resets.  Falls back to 30 for tanks without baseAmmo set
+    // (e.g. AI tanks constructed before t041 was integrated).
+    this.ammo = (this.baseAmmo !== undefined) ? this.baseAmmo : 30;
     this.fireCooldown = 0;
     this.kills = 0;
     this.damageDealt = 0;
