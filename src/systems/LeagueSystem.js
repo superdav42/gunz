@@ -98,8 +98,8 @@ export class LeagueSystem {
 
   /** LP required to promote to the next league (Infinity at champion). @type {number} */
   get lpToNextLeague() {
-    const promotionThreshold = this.def.lpToPromote;
-    if (!isFinite(promotionThreshold)) {
+    const promotionThreshold = this.def.promotionLp;
+    if (promotionThreshold === null) {
       return Infinity;
     }
     return Math.max(0, promotionThreshold - this._lp);
@@ -119,11 +119,11 @@ export class LeagueSystem {
    * @type {number}
    */
   get tierProgress() {
-    const { lpRequired, lpToPromote } = this.def;
-    if (!isFinite(lpToPromote)) {
+    const { lpRequired, promotionLp } = this.def;
+    if (promotionLp === null) {
       return 1.0;
     }
-    const range = lpToPromote - lpRequired;
+    const range = promotionLp - lpRequired;
     if (range <= 0) {
       return 1.0;
     }

@@ -219,14 +219,14 @@ export class LeagueDisplay {
 
     // LP label
     this._lpLabelEl.textContent =
-      def.lpToPromote === Infinity
+      def.promotionLp === null
         ? `${lp} LP — MAX`
-        : `${lp} / ${def.lpToPromote} LP`;
+        : `${lp} / ${def.promotionLp} LP`;
 
     // Bar fill
-    const span = def.lpToPromote === Infinity
+    const span = def.promotionLp === null
       ? 1
-      : def.lpToPromote - def.lpRequired;
+      : def.promotionLp - def.lpRequired;
     const pct = span > 0
       ? Math.min(100, Math.max(0, ((lp - def.lpRequired) / span) * 100))
       : 100;
