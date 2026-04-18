@@ -23,6 +23,7 @@ import { SaveSystem } from '../systems/SaveSystem.js';
 import { LeagueSystem } from '../systems/LeagueSystem.js';
 import { LeagueDisplay } from '../ui/LeagueDisplay.js';
 import { getLeagueDef } from '../data/LeagueDefs.js';
+import { StructureSystem } from '../systems/StructureSystem.js';
 
 export class Game {
   constructor(canvas) {
@@ -125,6 +126,11 @@ export class Game {
     this.wrecks = new WreckSystem(this.scene);
     this.wrecks.spawnInitial(this.terrain);
 
+    // StructureSystem (t049) — destructible bridges and low walls/fences.
+    // Bridges absorb shells and collapse into rubble that blocks tank movement.
+    // Walls are destroyed by any shell hit or tank contact.
+    this.structures = new StructureSystem(this.scene, this.terrain);
+
     // Dust-emission timers
     this._playerDustTimer = 0;
     this._enemyDustTimer = 0;
@@ -146,12 +152,13 @@ export class Game {
     };
 
     this.collision = new CollisionSystem({
-      terrain: this.terrain,
-      player: this.player,
-      enemies: this._enemiesAdapter,
-      projectiles: this.projectiles,
-      treeSystem: this.trees,
-      wrecks: this.wrecks,
+      terrain:         this.terrain,
+      player:          this.player,
+      enemies:         this._enemiesAdapter,
+      projectiles:     this.projectiles,
+      treeSystem:      this.trees,
+      wrecks:          this.wrecks,
+      structureSystem: this.structures,
     });
 
     this.collision
@@ -189,6 +196,19 @@ export class Game {
         // Particle count scales with splash radius so bigger weapons feel bigger.
         const count = Math.round(25 + splashRadius * 3);
         this.particles.emitExplosion(pos, { count, speed: 10, lifetime: 1.0 });
+      })
+      // t049 — bridge and wall feedback
+      .onBridgeHit((pos) => {
+        // Small concrete-chip burst when a shell hits but doesn't destroy a bridge
+        this.particles.emitExplosion(pos, { count: 10, speed: 5, lifetime: 0.5 });
+      })
+      .onBridgeDestroyed((pos) => {
+        // Large debris burst when the bridge collapses
+        this.particles.emitExplosion(pos, { count: 50, speed: 12, lifetime: 1.2 });
+      })
+      .onWallDestroyed((pos) => {
+        // Medium stone-fragment burst when a wall is smashed
+        this.particles.emitExplosion(pos, { count: 18, speed: 7, lifetime: 0.7 });
       });
 
     // SaveSystem: load persisted player profile from localStorage (t015).
@@ -247,6 +267,8 @@ export class Game {
         this.wrecks.reset();
         // Respawn the destructible tree set so the field is full again next round.
         this.trees.reset();
+        // Respawn bridges and walls so the field is fully intact next round (t049).
+        this.structures.reset();
         // Clear per-tank AI reaction timers so enemies don't carry over mid-fire
         // state from the previous round.
         this.aiController.reset();
@@ -638,6 +660,8 @@ export class Game {
       this.particles.reset();
       this.trees.reset();
       this.wrecks.reset();
+      // Respawn bridges and walls for the fresh match (t049).
+      this.structures.reset();
       this._playerDustTimer = 0;
       this._enemyDustTimer = 0;
       this.hud.hideGameOver();
