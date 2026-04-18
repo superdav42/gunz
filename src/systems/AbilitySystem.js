@@ -44,6 +44,15 @@ export class AbilitySystem {
     this._weaponCooldownMax = 0;
     /** @type {number} Seconds remaining before the slot is ready again (0 = ready). */
     this._weaponCooldownRemaining = 0;
+
+    // ── Next-shot modifier (Overcharge, t044) ────────────────────────────
+    /**
+     * Set to 'overcharge' when the Overcharge ability is activated.
+     * Game.js checks this after each fire() call and triples projectile damage.
+     * Cleared by clearPendingNextShot() once consumed.
+     * @type {string|null}
+     */
+    this.pendingNextShotAbility = null;
   }
 
   // ── Configuration ────────────────────────────────────────────────────────
@@ -182,8 +191,21 @@ export class AbilitySystem {
   tryActivateWeaponAbility() {
     if (!this.weaponReady) return null;
     this._weaponCooldownRemaining = this._weaponCooldownMax;
+    // Overcharge is a next-shot modifier — set the pending flag so Game.js can
+    // apply 3× damage to the next projectile(s) fired (t044).
+    if (this._weaponAbilityId === 'overcharge') {
+      this.pendingNextShotAbility = 'overcharge';
+    }
     console.info(`[AbilitySystem] Weapon ability activated: ${this._weaponAbilityId} (cooldown ${this._weaponCooldownMax}s)`);
     return this._weaponAbilityId;
+  }
+
+  /**
+   * Clear the pending next-shot modifier after it has been consumed by a fire() call.
+   * Called from Game.js immediately after applying the overcharge damage bonus.
+   */
+  clearPendingNextShot() {
+    this.pendingNextShotAbility = null;
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -195,5 +217,6 @@ export class AbilitySystem {
   reset() {
     this._tankCooldownRemaining   = 0;
     this._weaponCooldownRemaining = 0;
+    this.pendingNextShotAbility   = null;
   }
 }

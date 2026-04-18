@@ -7,6 +7,7 @@ import { CollisionSystem } from '../systems/CollisionSystem.js';
 import { ParticleSystem } from '../systems/ParticleSystem.js';
 import { TreeSystem } from '../systems/TreeSystem.js';
 import { WreckSystem } from '../systems/WreckSystem.js';
+import { AbilitySystem } from '../systems/AbilitySystem.js';
 import { HUD } from '../ui/HUD.js';
 import { KillFeed } from '../ui/KillFeed.js';
 import { MatchOverlay } from '../ui/MatchOverlay.js';
@@ -24,9 +25,9 @@ import { SaveSystem } from '../systems/SaveSystem.js';
 import { LeagueSystem } from '../systems/LeagueSystem.js';
 import { LeagueDisplay } from '../ui/LeagueDisplay.js';
 import { getLeagueDef } from '../data/LeagueDefs.js';
-import { AbilitySystem } from '../systems/AbilitySystem.js';
 import { getTankDef } from '../data/TankDefs.js';
 import { GunDefs, MeleeDefs } from '../data/WeaponDefs.js';
+import { Projectile } from '../entities/Projectile.js';
 
 export class Game {
   constructor(canvas) {
@@ -259,6 +260,8 @@ export class Game {
         this.wrecks.reset();
         // Respawn the destructible tree set so the field is full again next round.
         this.trees.reset();
+        // Reset ability cooldowns so the player starts each round with abilities ready.
+        this.abilitySystem.reset();
         // Clear per-tank AI reaction timers so enemies don't carry over mid-fire
         // state from the previous round.
         this.aiController.reset();
@@ -333,7 +336,7 @@ export class Game {
     // round resets because Tank.reset() restores health to the (already-scaled) maxHealth.
     this.aiController.applyLeagueScalingToTeam(1, 0);
 
-    // AbilitySystem: cooldown-based Q-key ability framework (t042).
+    // AbilitySystem: cooldown-based Q-key ability framework (t042/t044).
     // Slots are configured from the player's loadout when a match starts.
     this.abilitySystem = new AbilitySystem();
 
@@ -407,6 +410,9 @@ export class Game {
 
     // Gate all combat logic on an active round.
     if (this.match.isActive()) {
+      // Ability cooldowns tick independently of player entity.
+      this.abilitySystem.update(dt);
+
       // Player input — PlayerController delegates to tank or soldier depending on mode.
       this._updatePlayer(input, dt);
 
@@ -495,6 +501,18 @@ export class Game {
     // Emit muzzle flash once per shot (using the first projectile for position/direction).
     // Shotgun fires 8 pellets simultaneously — a single flash for the burst is correct.
     if (newProjectiles.length > 0) {
+      // Apply Overcharge modifier before adding projectiles to the system (t044).
+      // Overcharge: next shot deals 3× damage with a wider effective splash.
+      if (this.abilitySystem.pendingNextShotAbility === 'overcharge') {
+        for (const proj of newProjectiles) {
+          proj.damage *= 3;
+          // Wider beam effect: increase the projectile mesh scale slightly for visual cue.
+          proj.mesh.scale.setScalar(2.5);
+        }
+        this.abilitySystem.clearPendingNextShot();
+        console.info('[AbilitySystem] Overcharge consumed — shot damage tripled.');
+      }
+
       const first = newProjectiles[0];
       this.particles.emitMuzzleFlash(
         first.mesh.position.clone(),
@@ -545,17 +563,15 @@ export class Game {
       }
     }
 
-    // ---- Ability activation — Q key (t042) ----
-    // Tank mode  → try tank ability slot.
-    // Soldier mode → try weapon ability slot.
-    // Actual gameplay effects are implemented by t043 (tank) and t044 (weapon);
-    // for now the activation is logged so the framework is verifiable end-to-end.
+    // ---- Ability activation — Q key (t042/t044) ----
+    // Tank mode   → try tank ability slot (effects: t043).
+    // Soldier mode → try weapon ability slot (effects: t044, implemented below).
     if (input.ability) {
       if (this.playerController.mode === 'tank') {
         const activated = this.abilitySystem.tryActivateTankAbility();
         if (activated) {
           // Placeholder VFX: emit a burst at the tank's position.
-          // t043 will replace this with the real ability effect.
+          // t043 will replace this with the real tank ability effect.
           this.particles.emitExplosion(
             this.player.mesh.position.clone(),
             { count: 20, speed: 8, lifetime: 0.8 }
@@ -564,12 +580,9 @@ export class Game {
       } else if (this.playerController.soldier) {
         const activated = this.abilitySystem.tryActivateWeaponAbility();
         if (activated) {
-          // Placeholder VFX: emit a burst at the soldier's position.
-          // t044 will replace this with the real weapon ability effect.
-          this.particles.emitExplosion(
-            this.playerController.soldier.mesh.position.clone(),
-            { count: 15, speed: 6, lifetime: 0.6 }
-          );
+          // Execute real weapon ability effects (t044):
+          // clusterBomb, lockOn, overcharge, novaBlast, dashStrike.
+          this._executeWeaponAbility(activated, this.playerController.soldier);
         }
       }
     }
@@ -832,6 +845,163 @@ export class Game {
           break; // soldier removed; stop checking more projectiles this frame
         }
       }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Weapon ability effects (t044)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Execute a weapon ability effect.
+   *
+   * Each ability description from VISION.md §Abilities:
+   *   clusterBomb — Grenade Launcher: fire 5 mini-grenades in a spread arc
+   *   lockOn      — Rocket Launcher:  fire a homing rocket at the nearest enemy
+   *   overcharge  — Railgun:          next shot deals 3× damage (handled in _updatePlayer)
+   *   novaBlast   — Plasma Cannon:    AoE explosion centred on the player soldier
+   *   dashStrike  — Energy Blade:     lunge 10 m forward, melee everything in path
+   *
+   * @param {string}                                       abilityId
+   * @param {import('../entities/Soldier.js').Soldier}    soldier
+   * @private
+   */
+  _executeWeaponAbility(abilityId, soldier) {
+    switch (abilityId) {
+      case 'clusterBomb': {
+        // Fire 5 mini-grenades in a 48° spread arc (−24°, −12°, 0°, +12°, +24°).
+        const muzzlePos = new THREE.Vector3();
+        soldier.muzzle.getWorldPosition(muzzlePos);
+        const baseDir = new THREE.Vector3();
+        soldier.muzzle.getWorldDirection(baseDir);
+
+        const SPREAD_STEPS = [-24, -12, 0, 12, 24]; // degrees
+        for (const angleDeg of SPREAD_STEPS) {
+          const dir = baseDir.clone().applyAxisAngle(
+            new THREE.Vector3(0, 1, 0),
+            THREE.MathUtils.degToRad(angleDeg)
+          );
+          // Add slight upward angle for arc behaviour
+          dir.y += 0.3;
+          dir.normalize();
+
+          const proj = new Projectile({
+            position:      muzzlePos.clone(),
+            direction:     dir,
+            isPlayerOwned: true,
+            ownerTank:     soldier,
+            speed:         22,
+            damage:        22,    // ~40 % of base grenade damage per fragment
+            splashRadius:  3,
+            isArc:         true,
+            isExplosive:   true,
+          });
+          this.projectiles.add(proj);
+        }
+
+        this.particles.emitMuzzleFlash(muzzlePos.clone(), baseDir.clone());
+        console.info('[AbilitySystem] Cluster Bomb fired — 5 mini-grenades launched.');
+        break;
+      }
+
+      case 'lockOn': {
+        // Find the nearest living enemy to home onto.
+        const soldierPos = soldier.mesh.position;
+        let nearestEnemy = null;
+        let nearestDist  = Infinity;
+
+        for (const tank of this.teams.getEnemyTanks()) {
+          if (tank.health <= 0) continue;
+          const d = soldierPos.distanceTo(tank.mesh.position);
+          if (d < nearestDist) {
+            nearestDist  = d;
+            nearestEnemy = tank;
+          }
+        }
+
+        // Fire the homing rocket from the muzzle toward the target (or straight if none).
+        const muzzlePos2 = new THREE.Vector3();
+        soldier.muzzle.getWorldPosition(muzzlePos2);
+        const fireDir = new THREE.Vector3();
+        if (nearestEnemy) {
+          fireDir.subVectors(nearestEnemy.mesh.position, muzzlePos2).normalize();
+        } else {
+          soldier.muzzle.getWorldDirection(fireDir);
+        }
+
+        const homingProj = new Projectile({
+          position:      muzzlePos2.clone(),
+          direction:     fireDir,
+          isPlayerOwned: true,
+          ownerTank:     soldier,
+          speed:         55,
+          damage:        100,   // rocket launcher base (VISION.md: 90 + 10 % lock bonus)
+          splashRadius:  8,
+          isArc:         false,
+          isExplosive:   true,
+          homingTarget:  nearestEnemy,  // null = flies straight (no target in range)
+          homingStrength: 4,
+        });
+        this.projectiles.add(homingProj);
+
+        this.particles.emitMuzzleFlash(muzzlePos2.clone(), fireDir.clone());
+        const targetName = nearestEnemy ? 'nearest enemy' : 'no target';
+        console.info(`[AbilitySystem] Lock-On rocket fired — homing on ${targetName}.`);
+        break;
+      }
+
+      case 'overcharge':
+        // Overcharge is a "next shot" ability — the flag was already set by
+        // AbilitySystem.tryActivateWeaponAbility(). The effect is applied in
+        // _updatePlayer() when the next projectile(s) are created.
+        console.info('[AbilitySystem] Overcharge primed — next shot deals 3× damage.');
+        break;
+
+      case 'novaBlast': {
+        // AoE explosion centred on the player soldier (radius 12 units per VISION.md).
+        const blastPos = soldier.mesh.position.clone();
+        const BLAST_RADIUS = 12;
+        const BLAST_DAMAGE = 180; // high single-use burst (plasma cannon tier)
+
+        // Damage all living enemy tanks within range.
+        for (const tank of this.teams.getEnemyTanks()) {
+          if (tank.health <= 0) continue;
+          const d = blastPos.distanceTo(tank.mesh.position);
+          if (d > BLAST_RADIUS) continue;
+
+          // Linear falloff from centre: full damage at 0, half at edge.
+          const falloff = 1 - (d / BLAST_RADIUS) * 0.5;
+          const dmg = Math.round(BLAST_DAMAGE * falloff);
+
+          this.stats.recordPlayerDamage(tank, Math.min(dmg, tank.health));
+          tank.takeDamage(dmg);
+
+          if (tank.health <= 0) {
+            const hitPos = tank.mesh.position.clone();
+            this.stats.recordTankKilled(tank, true);
+            this.killFeed.addMessage('Player', tank.name || 'Enemy');
+            this.teams.killTank(tank);
+            this.particles.emitExplosion(hitPos, { count: 35, speed: 10 });
+          }
+        }
+
+        // Large visual blast at player position.
+        this.particles.emitExplosion(blastPos, { count: 60, speed: 14, lifetime: 1.4 });
+        console.info('[AbilitySystem] Nova Blast detonated.');
+        break;
+      }
+
+      case 'dashStrike':
+        // Dash Strike is handled by the melee ability system (t033):
+        // activeSoldier.activateMeleeAbility() in the melee section above.
+        // This case is reached when AbilitySystem assigns dashStrike to the weapon
+        // slot; the cooldown is consumed here but the physical effect fires via the
+        // melee handler earlier in the same frame.
+        console.info('[AbilitySystem] Dash Strike — weapon slot cooldown consumed (effect via melee system).');
+        break;
+
+      default:
+        console.warn(`[AbilitySystem] Unknown weapon ability id: "${abilityId}"`);
     }
   }
 
