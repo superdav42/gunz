@@ -1,9 +1,13 @@
 /**
- * LoadoutScreen — pre-match tank + weapon selection UI (t018).
+ * LoadoutScreen — pre-match tank + weapon selection UI (t018 + t040).
  *
  * Renders a full-screen overlay (#loadout-overlay in index.html) that lets the
  * player pick their tank class and on-foot weapons from their owned inventory
  * before each match.
+ *
+ * t040 addition: each tank card now shows visual stat comparison bars for HP,
+ * Speed, Armor, and Damage — normalised against the highest value across all
+ * defined tank classes.  This lets the player compare tanks at a glance.
  *
  * Integration pattern (from Game.js):
  *
@@ -32,6 +36,26 @@
 
 import { TankDefs, TANK_ORDER } from '../data/TankDefs.js';
 import { GunDefs, MeleeDefs, GUN_ORDER, MELEE_ORDER } from '../data/WeaponDefs.js';
+
+/**
+ * Maximum values for HP, Speed, Armor, and Damage across all defined tank classes.
+ * Computed once at module load time so stat bars are always normalised against
+ * the full roster — no magic constants, no maintenance burden.
+ *
+ * Exported so tests and other modules can verify the normalisation values.
+ */
+export const TANK_STAT_MAX = (() => {
+  let hp = 0, speed = 0, armor = 0, damage = 0;
+  for (const id of TANK_ORDER) {
+    const d = TankDefs[id];
+    if (!d) continue;
+    if (d.hp     > hp)     hp     = d.hp;
+    if (d.speed  > speed)  speed  = d.speed;
+    if (d.armor  > armor)  armor  = d.armor;
+    if (d.damage > damage) damage = d.damage;
+  }
+  return { hp, speed, armor, damage };
+})();
 
 export class LoadoutScreen {
   /**
@@ -208,14 +232,15 @@ export class LoadoutScreen {
     descLine.className = 'ls-card-desc';
     descLine.textContent = def.description;
 
-    const statsLine = document.createElement('div');
-    statsLine.className = 'ls-card-stats';
-    const armorPct = Math.round(def.armor * 100);
-    statsLine.innerHTML =
-      `HP <b>${def.hp}</b>&nbsp;&nbsp;` +
-      `SPD <b>${def.speed}</b>&nbsp;&nbsp;` +
-      `ARM <b>${armorPct}%</b>` +
-      (def.ability ? `&nbsp;&nbsp;⚡ <b>${def.ability}</b>` : '');
+    // Stat comparison bars (t040): HP, Speed, Armor, Damage normalised vs roster max
+    const barsDiv = this._makeStatBars(def);
+
+    // Ability badge — only shown when the tank has a special ability
+    const abilityLine = document.createElement('div');
+    abilityLine.className = 'ls-card-ability';
+    if (def.ability) {
+      abilityLine.textContent = `⚡ ${def.ability}`;
+    }
 
     const leagueLine = document.createElement('div');
     leagueLine.className = 'ls-card-league';
@@ -233,7 +258,8 @@ export class LoadoutScreen {
 
     info.appendChild(nameLine);
     info.appendChild(descLine);
-    info.appendChild(statsLine);
+    info.appendChild(barsDiv);
+    if (def.ability) info.appendChild(abilityLine);
     info.appendChild(leagueLine);
 
     card.appendChild(swatch);
@@ -248,6 +274,86 @@ export class LoadoutScreen {
     }
 
     return card;
+  }
+
+  /**
+   * Build a compact stat-comparison block for a tank card (t040).
+   *
+   * Renders four horizontal bars — HP, Speed, Armor, Damage — with each bar's
+   * width proportional to the tank's value relative to the maximum across all
+   * defined tank classes (TANK_STAT_MAX).  A minimum fill of 4 % is enforced so
+   * even the weakest stat is visually present.
+   *
+   * The CSS classes used here (.ls-stat-bars, .ls-stat-row, .ls-stat-lbl,
+   * .ls-stat-bar, .ls-stat-fill, .ls-stat-val) are defined in index.html.
+   *
+   * @private
+   * @param {object} def - TankDef from TankDefs
+   * @returns {HTMLElement}
+   */
+  _makeStatBars(def) {
+    const container = document.createElement('div');
+    container.className = 'ls-stat-bars';
+
+    /** @type {Array<{label:string, value:number, max:number, text:string}>} */
+    const rows = [
+      {
+        label: 'HP',
+        value: def.hp,
+        max:   TANK_STAT_MAX.hp,
+        text:  String(def.hp),
+      },
+      {
+        label: 'SPD',
+        value: def.speed,
+        max:   TANK_STAT_MAX.speed,
+        text:  String(def.speed),
+      },
+      {
+        label: 'ARM',
+        value: def.armor,
+        max:   TANK_STAT_MAX.armor,
+        text:  Math.round(def.armor * 100) + '%',
+      },
+      {
+        label: 'DMG',
+        value: def.damage,
+        max:   TANK_STAT_MAX.damage,
+        text:  String(def.damage),
+      },
+    ];
+
+    for (const r of rows) {
+      const pct = r.max > 0
+        ? Math.max(4, Math.round((r.value / r.max) * 100))
+        : 0;
+
+      const row = document.createElement('div');
+      row.className = 'ls-stat-row';
+
+      const lbl = document.createElement('span');
+      lbl.className = 'ls-stat-lbl';
+      lbl.textContent = r.label;
+
+      const barWrap = document.createElement('div');
+      barWrap.className = 'ls-stat-bar';
+
+      const barFill = document.createElement('div');
+      barFill.className = 'ls-stat-fill';
+      barFill.style.width = pct + '%';
+
+      const val = document.createElement('span');
+      val.className = 'ls-stat-val';
+      val.textContent = r.text;
+
+      barWrap.appendChild(barFill);
+      row.appendChild(lbl);
+      row.appendChild(barWrap);
+      row.appendChild(val);
+      container.appendChild(row);
+    }
+
+    return container;
   }
 
   /**

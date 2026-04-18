@@ -1,5 +1,7 @@
 /**
- * TankDefs.test.js — unit tests for TankDefs data and helper functions.
+ * TankDefs.test.js — unit tests for TankDefs data, helper functions, and the
+ * TANK_STAT_MAX normalisation values used by LoadoutScreen's stat comparison
+ * bars (t040).
  *
  * Run: node --test tests/TankDefs.test.js
  *
@@ -10,6 +12,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { TankDefs, TANK_ORDER, getTankDef } from '../src/data/TankDefs.js';
+import { TANK_STAT_MAX } from '../src/ui/LoadoutScreen.js';
 
 // ---------------------------------------------------------------------------
 // Completeness
@@ -356,4 +359,69 @@ test('HP ordering: siegeTank > heavy > shieldTank > flameTank > standard ≥ jum
   assert.ok(hp('standard')  >= hp('jumpTank'), 'standard ≥ jumpTank');
   assert.ok(hp('jumpTank')  > hp('scout'),    'jumpTank > scout');
   assert.ok(hp('scout')     > hp('artillery'), 'scout > artillery');
+});
+
+// ---------------------------------------------------------------------------
+// TANK_STAT_MAX normalisation (t040) — LoadoutScreen stat comparison bars
+// ---------------------------------------------------------------------------
+
+test('TANK_STAT_MAX.hp equals the highest hp across all tank classes', () => {
+  const expected = Math.max(...TANK_ORDER.map((id) => TankDefs[id].hp));
+  assert.equal(TANK_STAT_MAX.hp, expected);
+  // Siege Tank has 250 hp — the roster maximum
+  assert.equal(TANK_STAT_MAX.hp, 250, 'Siege Tank has the highest HP (250)');
+});
+
+test('TANK_STAT_MAX.speed equals the highest speed across all tank classes', () => {
+  const expected = Math.max(...TANK_ORDER.map((id) => TankDefs[id].speed));
+  assert.equal(TANK_STAT_MAX.speed, expected);
+  // Scout has speed 20 — the roster maximum
+  assert.equal(TANK_STAT_MAX.speed, 20, 'Scout has the highest speed (20)');
+});
+
+test('TANK_STAT_MAX.armor equals the highest armor fraction across all tank classes', () => {
+  const expected = Math.max(...TANK_ORDER.map((id) => TankDefs[id].armor));
+  assert.equal(TANK_STAT_MAX.armor, expected);
+  // Siege Tank has armor 0.35 — the roster maximum
+  assert.equal(TANK_STAT_MAX.armor, 0.35, 'Siege Tank has the highest armor (0.35)');
+});
+
+test('TANK_STAT_MAX.damage equals the highest damage across all tank classes', () => {
+  const expected = Math.max(...TANK_ORDER.map((id) => TankDefs[id].damage));
+  assert.equal(TANK_STAT_MAX.damage, expected);
+  // Siege Tank has damage 90 — the roster maximum
+  assert.equal(TANK_STAT_MAX.damage, 90, 'Siege Tank has the highest damage (90)');
+});
+
+test('all TANK_STAT_MAX values are positive', () => {
+  for (const [key, val] of Object.entries(TANK_STAT_MAX)) {
+    assert.ok(val > 0, `TANK_STAT_MAX.${key} must be positive, got ${val}`);
+  }
+});
+
+test('stat bar percentages are in [0, 100] for every tank and stat', () => {
+  for (const id of TANK_ORDER) {
+    const def = TankDefs[id];
+    const checks = [
+      { stat: 'hp',    value: def.hp,    max: TANK_STAT_MAX.hp },
+      { stat: 'speed', value: def.speed, max: TANK_STAT_MAX.speed },
+      { stat: 'armor', value: def.armor, max: TANK_STAT_MAX.armor },
+      { stat: 'damage',value: def.damage,max: TANK_STAT_MAX.damage },
+    ];
+    for (const c of checks) {
+      const pct = Math.round((c.value / c.max) * 100);
+      assert.ok(pct >= 0 && pct <= 100,
+        `${id}.${c.stat} pct=${pct} should be in [0, 100]`);
+    }
+  }
+});
+
+test('the hp leader renders a 100 % bar', () => {
+  const pct = Math.round((TankDefs['siegeTank'].hp / TANK_STAT_MAX.hp) * 100);
+  assert.equal(pct, 100, 'Siege Tank hp bar should be full width');
+});
+
+test('the speed leader renders a 100 % bar', () => {
+  const pct = Math.round((TankDefs['scout'].speed / TANK_STAT_MAX.speed) * 100);
+  assert.equal(pct, 100, 'Scout speed bar should be full width');
 });

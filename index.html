@@ -583,6 +583,78 @@
       color: rgba(255,255,255,0.45);
     }
 
+    /* === Stat comparison bars (t040) === */
+
+    /* Container for the four stat rows inside a tank card */
+    .ls-stat-bars {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin: 4px 0 2px;
+    }
+
+    /* One row: label | bar | value */
+    .ls-stat-row {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    /* "HP", "SPD", "ARM", "DMG" label — fixed width so bars align */
+    .ls-stat-lbl {
+      font-size: 9px;
+      font-weight: 700;
+      color: rgba(255,255,255,0.45);
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      width: 26px;
+      flex-shrink: 0;
+    }
+
+    /* Bar track */
+    .ls-stat-bar {
+      flex: 1;
+      height: 5px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    /* Bar fill — width is set inline as a percentage */
+    .ls-stat-fill {
+      height: 100%;
+      background: #4caf50;
+      border-radius: 3px;
+      transition: width 0.2s ease;
+    }
+
+    /* Numeric value to the right of the bar */
+    .ls-stat-val {
+      font-size: 9px;
+      color: rgba(255,255,255,0.6);
+      width: 28px;
+      text-align: right;
+      flex-shrink: 0;
+    }
+
+    /* Selected card — brighter bar fill */
+    .ls-card-selected .ls-stat-fill {
+      background: #66bb6a;
+    }
+
+    /* Locked card — muted bar fill */
+    .ls-card-locked .ls-stat-fill {
+      background: rgba(255,255,255,0.2);
+    }
+
+    /* Ability badge on tank cards */
+    .ls-card-ability {
+      font-size: 10px;
+      font-weight: 700;
+      color: #ffb300;
+      letter-spacing: 0.5px;
+    }
+
     /* === Footer / deploy bar === */
     .ls-footer {
       display: flex;
