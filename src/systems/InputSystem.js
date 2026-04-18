@@ -25,6 +25,8 @@ export class InputSystem {
     this._switchToGunRequested   = false;
     /** One-shot: true on the frame 2 is pressed — switch to melee slot (t034). */
     this._switchToMeleeRequested = false;
+    /** One-shot: Q key activates the equipped melee weapon's special ability (t033). */
+    this._abilityRequested = false;
 
     // Mouse aim
     this._mouseAim = { active: false, x: 0, y: 0 };
@@ -46,6 +48,8 @@ export class InputSystem {
       // 1/2 — weapon slot switching: 1 = gun, 2 = melee (t034)
       if (e.code === 'Digit1') this._switchToGunRequested   = true;
       if (e.code === 'Digit2') this._switchToMeleeRequested = true;
+      // Q key — activate melee/weapon ability (dashStrike for energyBlade, t033)
+      if (e.code === 'KeyQ') this._abilityRequested = true;
       // Prevent Tab from shifting browser focus while held for the scoreboard
       if (e.code === 'Tab') e.preventDefault();
     });
@@ -168,6 +172,8 @@ export class InputSystem {
       melee: this._meleeRequested,
       /** One-shot: R key triggers a manual reload for the on-foot gun (t030). */
       reload: this._reloadRequested,
+      /** One-shot: Q key triggers the equipped melee weapon's special ability (t033). */
+      ability: this._abilityRequested,
       turretAngle: this._turretAngle,
       /** true while Tab is held — shows/hides the scoreboard overlay */
       tabHeld: !!this._keys['Tab'],
@@ -186,6 +192,7 @@ export class InputSystem {
     this._exitVehicleRequested   = false;
     this._switchToGunRequested   = false;
     this._switchToMeleeRequested = false;
+    this._abilityRequested       = false;
 
     return state;
   }
