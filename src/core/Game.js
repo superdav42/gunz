@@ -363,8 +363,9 @@ export class Game {
         `[Game] Loadout selected — tank:${selection.tank} ` +
         `gun:${selection.gun} melee:${selection.melee}`
       );
-      // Apply on-foot gun selection so soldiers spawn with the chosen weapon (t031).
-      this.playerController.soldierGunId = selection.gun;
+      // Apply on-foot gun and melee selections so soldiers spawn with chosen weapons (t031/t034).
+      this.playerController.soldierGunId   = selection.gun;
+      this.playerController.soldierMeleeId = selection.melee;
       this._startImmediately();
     });
   }
@@ -445,11 +446,16 @@ export class Game {
     // maxHealth is passed so the bar fills to 100 % at full soldier HP (30), not 30 %.
     const roundStats = this.stats.getCurrentRoundStats();
     this.hud.update({
-      score:     this.score,
-      health:    this.playerController.health,
-      maxHealth: this.playerController.maxHealth,
-      ammo:      this.playerController.ammo,
-      stats:     roundStats,
+      score:             this.score,
+      health:            this.playerController.health,
+      maxHealth:         this.playerController.maxHealth,
+      ammo:              this.playerController.ammo,
+      stats:             roundStats,
+      // Weapon slot display (t034): only relevant in soldier mode.
+      soldierMode:       this.playerController.mode === 'soldier',
+      activeWeaponSlot:  this.playerController.activeWeaponSlot,
+      soldierGunId:      this.playerController.soldierGunId,
+      soldierMeleeId:    this.playerController.soldierMeleeId,
     });
 
     // Scoreboard: show when Tab is held
@@ -481,10 +487,17 @@ export class Game {
       }
     }
 
-    // ---- On-foot soldier melee (t026) ----
-    // playerController.soldier is set by PlayerController (t025) when on foot.
+    // ---- On-foot soldier melee (t026/t034) ----
+    // Melee swings are triggered by:
+    //   a) F key / middle-click (input.melee) — always swings regardless of active slot.
+    //   b) Fire button (input.fire) when the melee slot is active (activeWeaponSlot === 'melee').
+    // Case (b): PlayerController._updateSoldierMode suppresses gun fire in melee slot,
+    // but hit detection needs the full target list so it is resolved here in Game.js.
     const activeSoldier = this.playerController.soldier;
-    if (activeSoldier && input.melee) {
+    const meleeSlotFire = this.playerController.mode === 'soldier' &&
+      this.playerController.activeWeaponSlot === 'melee' &&
+      input.fire;
+    if (activeSoldier && (input.melee || meleeSlotFire)) {
       // Melee targets: living enemy tanks + living AI enemy soldiers (t028)
       const aiSoldiers = this.aiController.getActiveSoldiers()
         .filter(s => s.teamId === 1 && s.health > 0);
@@ -770,8 +783,9 @@ export class Game {
         `[Game] Loadout updated — tank:${selection.tank} ` +
         `gun:${selection.gun} melee:${selection.melee}`
       );
-      // Apply on-foot gun selection so soldiers spawn with the chosen weapon (t031).
-      this.playerController.soldierGunId = selection.gun;
+      // Apply on-foot gun and melee selections so soldiers spawn with chosen weapons (t031/t034).
+      this.playerController.soldierGunId   = selection.gun;
+      this.playerController.soldierMeleeId = selection.melee;
 
       this.score = 0;
       // Reset match state machine first (no team events should fire during reset)
