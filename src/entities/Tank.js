@@ -163,6 +163,15 @@ export class Tank {
     this.shielded = false;
 
     /**
+     * Flamethrower active: true while the player is holding the fire button
+     * (or an AI flame tank is in fire range).  Checked each frame by
+     * FlameSystem to emit fire particles and apply cone damage.
+     * Only meaningful when tankClassId === 'flameTank'.
+     * @type {boolean}
+     */
+    this.flameActive = false;
+
+    /**
      * Rocket Jump: while true, PlayerController and AIController skip terrain-
      * follow so TankAbilityEffects can drive the Y coordinate along the arc.
      * @type {boolean}
@@ -536,6 +545,16 @@ export class Tank {
   // Combat
   // ---------------------------------------------------------------------------
 
+  /**
+   * True when this tank is a Flame Tank (uses continuous cone damage instead
+   * of discrete projectiles).  Checked by PlayerController and AIController
+   * to suppress the normal fire() call in favour of FlameSystem.
+   * @returns {boolean}
+   */
+  get isFlamethrower() {
+    return this.tankClassId === 'flameTank';
+  }
+
   setTurretAngle(angle) {
     if (this.turret) {
       this.turret.rotation.y = angle - this.mesh.rotation.y;
@@ -638,6 +657,7 @@ export class Tank {
     // TankAbilityEffects.reset() cancels any in-flight timed effects before
     // Tank.reset() runs, so it is safe to zero these flags here.
     this.shielded             = false;
+    this.flameActive          = false;
     this.isJumping            = false;
     this.isLockedDown         = false;
     this.reactiveArmorCharges = 0;

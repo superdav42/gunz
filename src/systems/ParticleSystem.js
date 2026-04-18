@@ -228,6 +228,56 @@ export class ParticleSystem {
   }
 
   /**
+   * Emit continuous fire/smoke particles for the flame tank's flamethrower.
+   *
+   * Called once per particle-emit interval while the flame tank is firing.
+   * Streams fire forward with a 30° cone spread; particles fade from bright
+   * orange/yellow to dark smoke and rise slightly (gravity = -1).
+   *
+   * @param {THREE.Vector3} position  World-space muzzle tip.
+   * @param {THREE.Vector3} direction Normalised fire direction (turret forward).
+   */
+  emitFlame(position, direction) {
+    const p = this._acquire();
+    if (!p) return;
+
+    // Stream forward with random cone spread
+    const spread = 0.40;
+    const speed = 10 + Math.random() * 8;
+
+    p.velocity.set(
+      direction.x + (Math.random() - 0.5) * spread,
+      direction.y + (Math.random() - 0.5) * spread * 0.4 + 0.20, // slight upward bias
+      direction.z + (Math.random() - 0.5) * spread
+    ).normalize().multiplyScalar(speed);
+
+    p.position.copy(position);
+    p.life = 0.18 + Math.random() * 0.18;
+    p.maxLife = p.life;
+
+    // Fire palette: orange/yellow core → dark smoke on death
+    const r = Math.random();
+    if (r < 0.45) {
+      p.colorStart.setHex(0xff5500); // orange-red
+      p.colorEnd.setHex(0x220800);
+    } else if (r < 0.78) {
+      p.colorStart.setHex(0xff9900); // bright orange
+      p.colorEnd.setHex(0x331100);
+    } else {
+      p.colorStart.setHex(0xffee00); // yellow core
+      p.colorEnd.setHex(0x443300);
+    }
+
+    p.startScale = 0.28 + Math.random() * 0.38;
+    p.gravity = -1.5; // fire rises
+
+    p.mesh.material.color.copy(p.colorStart);
+    p.mesh.material.opacity = 0.92;
+    p.mesh.scale.setScalar(p.startScale);
+    p.mesh.position.copy(position);
+  }
+
+  /**
    * Emit debris when a tree is destroyed by a shell.
    * Spawns two batches:
    *   - Wood splinters (dark brown) that tumble outward with gravity
