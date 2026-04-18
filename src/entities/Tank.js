@@ -183,6 +183,22 @@ export class Tank {
      */
     this.reactiveArmorCharges = 0;
 
+    // ── Ability identity (t046) ──────────────────────────────────────────────
+    /**
+     * Which ability this tank owns (null = none).
+     * For AI tanks: set by AIController.assignLeagueAbilities() per league.
+     * For the player tank: set by AbilitySystem via Game.js loadout selection.
+     * Matches the ability id keys in TankDefs (e.g. 'energyShield', 'barrage').
+     * @type {string|null}
+     */
+    this.abilityId = null;
+
+    /**
+     * Seconds between uses of this tank's ability (0 when abilityId is null).
+     * @type {number}
+     */
+    this.abilityCooldown = 0;
+
     // Use class-defined colors as defaults; explicit overrides take priority.
     // _applyClassDef() has already stored this.colorBody / this.colorTurret.
     const palette = {

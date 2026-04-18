@@ -26,11 +26,23 @@ import { Soldier } from '../entities/Soldier.js';
  *     reactionTime  — seconds before engaging a newly-spotted target.
  *     hpMultiplier  — applied to enemy tank maxHealth via applyLeagueScalingToTeam().
  *     damageMultiplier — applied to enemy tank.damageMultiplier via applyLeagueScalingToTeam().
+ *     usesAbilities — null = no ability use; 'slow' = occasional (Gold);
+ *                     'tactical' = situational (Platinum); 'smart' = instant (Diamond+).
  *   Ally AI uses fixed "Gold-level" constants regardless of league.
+ *
+ * Ability usage (t046 — VISION.md §"AI Difficulty Scaling per League"):
+ *   At Gold+, AI tanks with an assigned ability (tank.abilityId) use it tactically:
+ *     'slow'     — 30% random chance when trigger conditions are met (Gold).
+ *     'tactical' — uses whenever trigger conditions are met (Platinum).
+ *     'smart'    — instant situational recognition (Diamond/Champion).
+ *   Call assignLeagueAbilities(teamId, startSlot, role) after applyLeagueScalingToTeam()
+ *   to assign per-tank abilities based on the default team composition for the league.
  *
  * Usage:
  *   const ai = new AIController(teams, projectiles, particles, terrain, leagueDef);
- *   ai.applyLeagueScalingToTeam(1, 0);  // scale enemy team HP + damage once at game start
+ *   ai.applyLeagueScalingToTeam(1, 0);       // scale enemy HP + damage once at game start
+ *   ai.assignLeagueAbilities(1, 0, 'enemy'); // assign abilities to enemy team
+ *   ai.assignLeagueAbilities(0, 1, 'ally');  // assign abilities to ally AI (skip player slot)
  *   // When an AI tank is killed, bail a soldier:
  *   ai.addSoldier(new Soldier({teamId, name}), teamId, scene);
  *   // Each frame (inside Game loop):
@@ -137,6 +149,46 @@ const SOLDIER_COVER_TIMEOUT = 4.0;
 /** Aim spread for AI soldiers (radians at worst accuracy). Lower than tanks. */
 const SOLDIER_MAX_AIM_SPREAD = 0.5;
 
+// ── Ability AI tuneable constants (t046) ──────────────────────────────────
+
+/** HP fraction below which a tank prefers defensive abilities (shield, armor). */
+const ABILITY_DEFENSIVE_HP_THRESHOLD = 0.55;
+
+/** Distance below which rocketJump triggers (tank is dangerously close). */
+const ROCKET_JUMP_TRIGGER_DIST = 12;
+
+/**
+ * Radius and minimum count for "cluster" detection (barrage / infernoBurst).
+ * If ≥ CLUSTER_MIN_TANKS enemies are within CLUSTER_RADIUS of the target,
+ * the cluster condition is satisfied.
+ */
+const CLUSTER_RADIUS = 20;
+const CLUSTER_MIN_TANKS = 2;
+
+/**
+ * Default ability assignments by team role and slot index.
+ * Matches the VISION.md team composition for Platinum+ leagues.
+ * Format: [abilityId, abilityCooldownSeconds] | null (no ability).
+ */
+const ABILITY_BY_SLOT = {
+  enemy: [
+    null,                           // slot 0 — standard grunt
+    null,                           // slot 1 — scout
+    ['reactiveArmor', 20],          // slot 2 — heavy
+    ['barrage', 30],                // slot 3 — artillery
+    ['infernoBurst', 20],           // slot 4 — flame tank
+    ['energyShield', 25],           // slot 5 — shield tank
+  ],
+  ally: [
+    null,                           // slot 0 — player (never assigned here)
+    null,                           // slot 1 — standard ally
+    ['reactiveArmor', 20],          // slot 2 — heavy ally
+    ['barrage', 30],                // slot 3 — artillery ally
+    ['infernoBurst', 20],           // slot 4 — flame ally
+    ['rocketJump', 15],             // slot 5 — jump tank ally
+  ],
+};
+
 // -------------------------------------------------------------------------
 
 export class AIController {
@@ -218,6 +270,43 @@ export class AIController {
       tank.maxHealth = Math.round(tank.baseHp * hpMultiplier);
       tank.health = tank.maxHealth;
       tank.damageMultiplier = damageMultiplier;
+    }
+  }
+
+  /**
+   * Assign abilities to AI tanks based on the current league and a fixed
+   * slot-to-ability table (matches VISION.md team composition for each league).
+   *
+   * Leagues below Gold (usesAbilities null): all tanks get abilityId = null.
+   * Gold+: abilities assigned per ABILITY_BY_SLOT table.
+   *
+   * Safe to call multiple times (e.g. on league change). Per-tank cooldown
+   * timers in _tankState are reset by reset() between rounds.
+   *
+   * @param {number}          teamId    — 0 or 1
+   * @param {number}          startSlot — first slot index to process
+   * @param {'enemy'|'ally'}  role      — which slot table to use
+   */
+  assignLeagueAbilities(teamId, startSlot, role) {
+    const team = this.teams.teams[teamId];
+    if (!team) return;
+
+    const usesAbilities = this._scaling ? this._scaling.usesAbilities : null;
+    const table = ABILITY_BY_SLOT[role] || ABILITY_BY_SLOT.enemy;
+
+    for (let i = startSlot; i < team.slots.length; i++) {
+      const tank = team.slots[i].tank;
+      const entry = table[i] || null;
+
+      if (!usesAbilities || !entry) {
+        // Bronze/Silver or no ability defined for this slot.
+        tank.abilityId = null;
+        tank.abilityCooldown = 0;
+      } else {
+        const [abilityId, cooldown] = entry;
+        tank.abilityId = abilityId;
+        tank.abilityCooldown = cooldown;
+      }
     }
   }
 
@@ -351,23 +440,33 @@ export class AIController {
 
   /**
    * Store the difficulty values from a league def into fast-access fields.
-   * Uses the `ai` sub-object from LeagueDefs (field: leagueDef.ai.*).
+   * Uses the `aiScaling` sub-object from LeagueDefs (field: leagueDef.aiScaling.*).
    * @param {object} leagueDef
    * @private
    */
   _applyLeagueDef(leagueDef) {
-    this._scaling = leagueDef.ai;
+    this._scaling = leagueDef.aiScaling;
   }
 
   /**
    * Get (or lazily create) the per-tank AI state object.
    * @param {object} tank — Tank instance
-   * @returns {{reactionTimer: number, lastTargetUuid: string|null}}
+   * @returns {{
+   *   reactionTimer: number,
+   *   lastTargetUuid: string|null,
+   *   abilityCooldownLeft: number,
+   *   abilityActiveTimeLeft: number
+   * }}
    * @private
    */
   _getTankState(tank) {
     if (!this._tankState.has(tank)) {
-      this._tankState.set(tank, { reactionTimer: 0, lastTargetUuid: null });
+      this._tankState.set(tank, {
+        reactionTimer: 0,
+        lastTargetUuid: null,
+        abilityCooldownLeft: 0,
+        abilityActiveTimeLeft: 0,
+      });
     }
     return this._tankState.get(tank);
   }
@@ -397,10 +496,14 @@ export class AIController {
       const target = this._nearestTarget(tank.mesh.position, targets);
       const state = this._getTankState(tank);
 
+      // Tick ability cooldown and active-ability timers every frame,
+      // even when no target is in range.
+      this._tickAbilityTimers(dt, tank, state);
+
       // No target or target out of aggro range: reset reaction timer and idle.
       // Aggro range is per-tank so classes with longer range begin tracking earlier.
       const dist = target ? tank.mesh.position.distanceTo(target.mesh.position) : Infinity;
-      const aggroRange = Math.max(AGGRO_RANGE_MIN, tank.range * AGGRO_RANGE_FRACTION);
+      const aggroRange = Math.max(AGGRO_RANGE_MIN, (tank.range || 80) * AGGRO_RANGE_FRACTION);
       if (!target || dist > aggroRange) {
         state.reactionTimer = 0;
         state.lastTargetUuid = null;
@@ -416,7 +519,34 @@ export class AIController {
       }
       state.reactionTimer += dt;
 
-      this._driveTankTowardTarget(dt, tank, target, dist, state.reactionTimer, isEnemyTeam);
+      this._driveTankTowardTarget(
+        dt, tank, target, dist, state, isEnemyTeam, targets
+      );
+    }
+  }
+
+  /**
+   * Tick the ability cooldown and active-time counters for a single tank.
+   * Clears timed ability state flags (shielded, isLockedDown) when duration expires.
+   * Note: reactiveArmorCharges expire by charge-consumption in takeDamage().
+   *       rocketJump (isJumping) is managed by TankAbilityEffects.
+   *
+   * @param {number} dt
+   * @param {import('../entities/Tank.js').Tank} tank
+   * @param {object} state — per-tank AI state
+   * @private
+   */
+  _tickAbilityTimers(dt, tank, state) {
+    if (state.abilityCooldownLeft > 0) {
+      state.abilityCooldownLeft = Math.max(0, state.abilityCooldownLeft - dt);
+    }
+    if (state.abilityActiveTimeLeft > 0) {
+      state.abilityActiveTimeLeft = Math.max(0, state.abilityActiveTimeLeft - dt);
+      if (state.abilityActiveTimeLeft === 0) {
+        // Clear timed-effect flags when duration expires.
+        tank.shielded = false;
+        tank.isLockedDown = false;
+      }
     }
   }
 
@@ -477,17 +607,32 @@ export class AIController {
    * @param {import('../entities/Tank.js').Tank} tank
    * @param {import('../entities/Tank.js').Tank} target
    * @param {number} dist          — pre-computed distance to target (units)
-   * @param {number} reactionTimer — seconds this tank has had this target in range
+   * @param {object} state         — per-tank AI state object
    * @param {boolean} isEnemyTeam  — true = apply league scaling; false = ally AI defaults
+   * @param {import('../entities/Tank.js').Tank[]} targets — all living opponent tanks
    * @private
    */
-  _driveTankTowardTarget(dt, tank, target, dist, reactionTimer, isEnemyTeam) {
+  _driveTankTowardTarget(dt, tank, target, dist, state, isEnemyTeam, targets) {
+    const reactionTimer = state.reactionTimer;
     const pos = tank.mesh.position;
     const targetPos = target.mesh.position;
 
     // --- Choose difficulty values based on team role ---
-    const accuracy = isEnemyTeam ? this._scaling.aimAccuracy : ALLY_ACCURACY;
+    const accuracy = isEnemyTeam ? this._scaling.accuracy : ALLY_ACCURACY;
     const reactionTime = isEnemyTeam ? this._scaling.reactionTime : ALLY_REACTION_TIME;
+
+    // ── Ability evaluation (t046) ────────────────────────────────────────────
+    // Ally AI uses 'slow' mode if it has abilities (unconditional — ally difficulty
+    // is Gold-level regardless of league).
+    const abilityMode = isEnemyTeam
+      ? (this._scaling.usesAbilities || null)
+      : 'slow';
+
+    if (abilityMode && tank.abilityId && state.abilityCooldownLeft === 0) {
+      if (this._shouldUseAbility(abilityMode, tank, target, dist, targets)) {
+        this._activateAbility(tank, target, targets, state);
+      }
+    }
 
     // --- Per-class movement stats ---
     // tank.speed and tank.turnRate are set by Tank._applyClassDef from TankDefs.
@@ -780,7 +925,7 @@ export class AIController {
     if (!soldier.canFire()) return;
 
     // Apply aim spread — enemies scale with league, allies use fixed value
-    const accuracy = this._scaling ? this._scaling.aimAccuracy : ALLY_ACCURACY;
+    const accuracy = this._scaling ? this._scaling.accuracy : ALLY_ACCURACY;
     const maxSpread = (1 - accuracy) * SOLDIER_MAX_AIM_SPREAD;
     const spread = (Math.random() - 0.5) * 2 * maxSpread;
 
@@ -861,5 +1006,256 @@ export class AIController {
 
     const y = this.terrain.getHeightAt(best.x, best.z);
     return new THREE.Vector3(best.x, y, best.z);
+  }
+
+  // ── Ability AI — decision logic (t046) ─────────────────────────────────
+
+  /**
+   * Decide whether to use the given tank's ability right now.
+   *
+   * Tactical triggers per ability (VISION.md: "shields when taking fire,
+   * jumps to reposition, barrages on clusters"):
+   *   energyShield  — HP below defensive threshold.
+   *   reactiveArmor — HP below defensive threshold AND no charges remaining.
+   *   lockdownMode  — within fire range (good firing position to hold).
+   *   rocketJump    — too close to an enemy (needs repositioning).
+   *   barrage       — 2+ enemies clustered within CLUSTER_RADIUS of target.
+   *   infernoBurst  — 2+ enemies within short range (≤ 20 units) of self.
+   *
+   * Mode gate:
+   *   'slow'     — 30% random chance on top of trigger conditions (Gold).
+   *   'tactical' — trigger conditions alone (Platinum).
+   *   'smart'    — same as tactical; faster response comes from lower reactionTime.
+   *
+   * @param {string} mode        — 'slow'|'tactical'|'smart'
+   * @param {import('../entities/Tank.js').Tank} tank
+   * @param {import('../entities/Tank.js').Tank} target
+   * @param {number} dist
+   * @param {import('../entities/Tank.js').Tank[]} allEnemies — opponent tanks
+   * @returns {boolean}
+   * @private
+   */
+  _shouldUseAbility(mode, tank, target, dist, allEnemies) {
+    const hpFraction = tank.health / tank.maxHealth;
+    const abilityId  = tank.abilityId;
+    let conditionMet = false;
+
+    switch (abilityId) {
+      case 'energyShield':
+        conditionMet = hpFraction < ABILITY_DEFENSIVE_HP_THRESHOLD && !tank.shielded;
+        break;
+
+      case 'reactiveArmor':
+        conditionMet = hpFraction < ABILITY_DEFENSIVE_HP_THRESHOLD
+          && (tank.reactiveArmorCharges === 0 || tank.reactiveArmorCharges === undefined);
+        break;
+
+      case 'lockdownMode':
+        // Use when in firing range and not already locked down.
+        conditionMet = dist < Math.max(FIRE_RANGE_MIN, (tank.range || 80) * FIRE_RANGE_FRACTION)
+          && !tank.isLockedDown;
+        break;
+
+      case 'rocketJump':
+        conditionMet = dist < ROCKET_JUMP_TRIGGER_DIST;
+        break;
+
+      case 'barrage':
+        conditionMet = this._countNearby(target.mesh.position, allEnemies, CLUSTER_RADIUS)
+          >= CLUSTER_MIN_TANKS;
+        break;
+
+      case 'infernoBurst':
+        conditionMet = this._countNearby(tank.mesh.position, allEnemies, 20)
+          >= CLUSTER_MIN_TANKS;
+        break;
+
+      default:
+        conditionMet = false;
+        break;
+    }
+
+    if (!conditionMet) return false;
+
+    // 'slow' mode (Gold): only 30% chance to act even when the trigger fires.
+    if (mode === 'slow' && Math.random() > 0.30) return false;
+
+    return true;
+  }
+
+  /**
+   * Activate the given tank's ability and apply its effect.
+   *
+   * Effects (t046 scope, complementing t043 TankAbilityEffects for the player):
+   *   energyShield  — sets tank.shielded = true; cleared by _tickAbilityTimers
+   *                   after 5 seconds.
+   *   reactiveArmor — sets tank.reactiveArmorCharges (3 charges, each halves
+   *                   one hit's damage); charges consumed on each hit in takeDamage().
+   *   lockdownMode  — sets tank.isLockedDown = true for 8 seconds; AIController
+   *                   skips movement while active, extends effective fire range.
+   *   rocketJump    — teleports tank 20 units to a perpendicular flanking position;
+   *                   no sustained active period.
+   *   barrage       — fires 3 projectiles in a ±15° spread toward the target cluster.
+   *   infernoBurst  — fires 5 projectiles in a ±40° forward cone toward nearest enemy.
+   *
+   * @param {import('../entities/Tank.js').Tank} tank
+   * @param {import('../entities/Tank.js').Tank} target
+   * @param {import('../entities/Tank.js').Tank[]} allEnemies
+   * @param {object} state — per-tank AI state
+   * @private
+   */
+  _activateAbility(tank, target, allEnemies, state) {
+    switch (tank.abilityId) {
+      case 'energyShield':
+        tank.shielded = true;
+        state.abilityActiveTimeLeft = 5; // seconds
+        break;
+
+      case 'reactiveArmor':
+        // Grant 3 charge-based hits of 50% damage reduction (matches t043 design).
+        tank.reactiveArmorCharges = 3;
+        state.abilityActiveTimeLeft = 0; // charge-based, no timer needed
+        break;
+
+      case 'lockdownMode':
+        tank.isLockedDown = true;
+        state.abilityActiveTimeLeft = 8; // seconds
+        break;
+
+      case 'rocketJump':
+        this._doRocketJump(tank, target);
+        state.abilityActiveTimeLeft = 0;
+        break;
+
+      case 'barrage':
+        this._doBarrage(tank, target);
+        state.abilityActiveTimeLeft = 0;
+        break;
+
+      case 'infernoBurst':
+        this._doInfernoBurst(tank, allEnemies);
+        state.abilityActiveTimeLeft = 0;
+        break;
+
+      default:
+        break;
+    }
+
+    // Reset cooldown so the ability cannot be reused until the timer expires.
+    state.abilityCooldownLeft = tank.abilityCooldown || 0;
+  }
+
+  // ── Ability effect helpers ───────────────────────────────────────────────
+
+  /**
+   * Rocket Jump: teleport tank 20 units to a perpendicular flank position.
+   * Emits a particle burst at the landing site.
+   *
+   * @param {import('../entities/Tank.js').Tank} tank
+   * @param {import('../entities/Tank.js').Tank} target
+   * @private
+   */
+  _doRocketJump(tank, target) {
+    const pos = tank.mesh.position;
+    const toTarget = new THREE.Vector3(
+      target.mesh.position.x - pos.x,
+      0,
+      target.mesh.position.z - pos.z
+    ).normalize();
+
+    // Perpendicular direction to the target bearing; randomise left or right.
+    const perpendicular = new THREE.Vector3(-toTarget.z, 0, toTarget.x);
+    const side = Math.random() > 0.5 ? 1 : -1;
+    const jumpDist = 20;
+
+    const newX = THREE.MathUtils.clamp(
+      pos.x + perpendicular.x * jumpDist * side, -ARENA_BOUND, ARENA_BOUND
+    );
+    const newZ = THREE.MathUtils.clamp(
+      pos.z + perpendicular.z * jumpDist * side, -ARENA_BOUND, ARENA_BOUND
+    );
+
+    tank.mesh.position.set(newX, this.terrain.getHeightAt(newX, newZ), newZ);
+
+    this.particles.emitExplosion(
+      tank.mesh.position.clone(),
+      { count: 12, speed: 5, lifetime: 0.5 }
+    );
+  }
+
+  /**
+   * Barrage: fire three projectiles in a ±15° spread toward the target cluster.
+   *
+   * @param {import('../entities/Tank.js').Tank} tank
+   * @param {import('../entities/Tank.js').Tank} target
+   * @private
+   */
+  _doBarrage(tank, target) {
+    const SPREAD_ANGLES = [-0.26, 0, 0.26]; // ~15° each
+    const pos = tank.mesh.position;
+    const baseAngle = Math.atan2(
+      target.mesh.position.x - pos.x,
+      target.mesh.position.z - pos.z
+    );
+
+    for (const offset of SPREAD_ANGLES) {
+      tank.setTurretAngle(baseAngle + offset);
+      const projectile = tank.fire();
+      if (projectile) {
+        this.projectiles.add(projectile);
+        this.particles.emitMuzzleFlash(
+          projectile.mesh.position.clone(),
+          projectile.velocity.clone().normalize()
+        );
+      }
+    }
+  }
+
+  /**
+   * Inferno Burst: fire five projectiles in a ±40° cone toward nearest enemy.
+   *
+   * @param {import('../entities/Tank.js').Tank} tank
+   * @param {import('../entities/Tank.js').Tank[]} allEnemies
+   * @private
+   */
+  _doInfernoBurst(tank, allEnemies) {
+    const nearest = this._nearestTarget(tank.mesh.position, allEnemies);
+    if (!nearest) return;
+
+    const pos = tank.mesh.position;
+    const baseAngle = Math.atan2(
+      nearest.mesh.position.x - pos.x,
+      nearest.mesh.position.z - pos.z
+    );
+
+    const CONE_ANGLES = [-0.70, -0.35, 0, 0.35, 0.70]; // ~20° steps
+    for (const offset of CONE_ANGLES) {
+      tank.setTurretAngle(baseAngle + offset);
+      const projectile = tank.fire();
+      if (projectile) {
+        this.projectiles.add(projectile);
+        this.particles.emitMuzzleFlash(
+          projectile.mesh.position.clone(),
+          projectile.velocity.clone().normalize()
+        );
+      }
+    }
+  }
+
+  /**
+   * Count tanks in `candidates` within `radius` of `center`.
+   *
+   * @param {THREE.Vector3} center
+   * @param {import('../entities/Tank.js').Tank[]} candidates
+   * @param {number} radius
+   * @returns {number}
+   * @private
+   */
+  _countNearby(center, candidates, radius) {
+    let count = 0;
+    for (const t of candidates) {
+      if (center.distanceTo(t.mesh.position) <= radius) count++;
+    }
+    return count;
   }
 }

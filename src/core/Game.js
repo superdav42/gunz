@@ -352,6 +352,12 @@ export class Game {
     // round resets because Tank.reset() restores health to the (already-scaled) maxHealth.
     this.aiController.applyLeagueScalingToTeam(1, 0);
 
+    // Assign abilities to AI tanks based on the current league (t046).
+    // Gold+: specific slots get abilities matching VISION.md team compositions.
+    // Bronze/Silver: all abilityId fields remain null (method no-ops on those leagues).
+    this.aiController.assignLeagueAbilities(1, 0, 'enemy'); // all enemy slots
+    this.aiController.assignLeagueAbilities(0, 1, 'ally');  // ally AI, skip player (slot 0)
+
     // AbilitySystem: cooldown-based Q-key ability framework (t042/t044).
     // Slots are configured from the player's loadout when a match starts.
     this.abilitySystem = new AbilitySystem();

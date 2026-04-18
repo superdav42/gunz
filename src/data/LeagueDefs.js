@@ -14,6 +14,9 @@
  *   reactionTime:    seconds before an AI tank begins engaging a newly-spotted target.
  *   hpMultiplier:    enemy tank HP relative to the base value (1.0 = base).
  *   damageMultiplier:enemy projectile damage relative to base (1.0 = base).
+ *   usesAbilities:   null = no ability use; 'slow' = occasional random use (Gold);
+ *                    'tactical' = situational use (Platinum);
+ *                    'smart' = immediate situational recognition (Diamond/Champion).
  * tierCap:           highest upgrade tier available in the shop at this league.
  */
 export const LeagueDefs = {
@@ -27,6 +30,7 @@ export const LeagueDefs = {
       reactionTime: 1.5,
       hpMultiplier: 0.6,
       damageMultiplier: 0.6,
+      usesAbilities: null,
     },
     tierCap: 2,
   },
@@ -41,6 +45,7 @@ export const LeagueDefs = {
       reactionTime: 1.0,
       hpMultiplier: 0.8,
       damageMultiplier: 0.8,
+      usesAbilities: null,
     },
     tierCap: 3,
   },
@@ -55,6 +60,7 @@ export const LeagueDefs = {
       reactionTime: 0.7,
       hpMultiplier: 1.0,
       damageMultiplier: 1.0,
+      usesAbilities: 'slow',
     },
     tierCap: 4,
   },
@@ -69,6 +75,7 @@ export const LeagueDefs = {
       reactionTime: 0.5,
       hpMultiplier: 1.2,
       damageMultiplier: 1.1,
+      usesAbilities: 'tactical',
     },
     tierCap: 5,
   },
@@ -83,6 +90,7 @@ export const LeagueDefs = {
       reactionTime: 0.3,
       hpMultiplier: 1.4,
       damageMultiplier: 1.3,
+      usesAbilities: 'smart',
     },
     tierCap: 5,
   },
@@ -97,6 +105,7 @@ export const LeagueDefs = {
       reactionTime: 0.2,
       hpMultiplier: 1.6,
       damageMultiplier: 1.5,
+      usesAbilities: 'smart',
     },
     tierCap: 5,
   },
