@@ -16,7 +16,8 @@ import { TeamManager } from './TeamManager.js';
 import { AIController } from '../systems/AIController.js';
 import { MatchManager } from './MatchManager.js';
 import { StatsTracker } from '../systems/StatsTracker.js';
-import { PlayerInventory } from '../data/PlayerInventory.js';
+import { EconomySystem } from '../systems/EconomySystem.js';
+import { SaveSystem } from '../systems/SaveSystem.js';
 
 export class Game {
   constructor(canvas) {
@@ -25,7 +26,7 @@ export class Game {
     this.score = 0;
     this.isRunning = false;
 
-    /** @type {import('../data/PlayerInventory.js').LoadoutSelection} */
+    /** @type {{tank: string, gun: string, melee: string}|null} */
     this.currentLoadout = null;
 
     this._initRenderer();
@@ -157,9 +158,18 @@ export class Game {
         this.killFeed.addMessage(killer, victim);
       });
 
+    // SaveSystem: load persisted player profile from localStorage (t015).
+    // Must initialise before EconomySystem so we can seed the correct balance.
+    this.save = new SaveSystem();
+    this.save.load();
+
     // StatsTracker: per-round damage dealt, kills, assists, survival (t010)
     this.stats = new StatsTracker();
     this.stats.startRound();
+
+    // EconomySystem: persistent money balance + match reward calculation (t014).
+    // Seeded from the saved profile so balance carries over between sessions.
+    this.economy = new EconomySystem({ startingBalance: this.save.getProfile().money });
 
     // MatchManager drives the best-of-3 state machine.
     // It registers its own onTeamEliminated hook with TeamManager internally.
@@ -184,6 +194,8 @@ export class Game {
         this.projectiles.reset();
         this.particles.reset();
         this.wrecks.reset();
+        // Respawn the destructible tree set so the field is full again next round.
+        this.trees.reset();
         this._playerDustTimer = 0;
         this._enemyDustTimer = 0;
       })
@@ -196,6 +208,22 @@ export class Game {
           `K: ${matchStats.totals.kills}, A: ${matchStats.totals.assists}, ` +
           `Rounds survived: ${matchStats.totals.roundsSurvived}`
         );
+
+        // Calculate and award match rewards via EconomySystem (t014).
+        const { breakdowns, grandTotal } = this.economy.calculateFullMatchRewards({
+          matchStats,
+          roundWins: [...this.match.roundWins],
+          wonMatch: playerWon,
+        });
+        breakdowns.forEach(bd => this.economy.earnReward(bd));
+        console.info(
+          `[EconomySystem] Match rewards awarded: $${grandTotal}. ` +
+          `New balance: $${this.economy.balance}`
+        );
+
+        // Persist updated balance to localStorage via SaveSystem (t015).
+        this.save.updateMoney(this.economy.balance);
+        this.save.save();
       });
 
     // AIController drives all 10 AI tanks (team 0 slots 1-5 as allies, team 1 all 6 as enemies)
@@ -214,19 +242,25 @@ export class Game {
     this.matchOverlay = new MatchOverlay(this);
     this.match.onUIUpdate(ui => this.matchOverlay.update(ui));
 
-    // PlayerInventory and LoadoutScreen (t018).
-    this.inventory = new PlayerInventory();
-    this.loadoutScreen = new LoadoutScreen(this.inventory);
+    // LoadoutScreen (t018): pre-match tank + weapon selection.
+    // Uses SaveSystem for owned items and equipped loadout persistence.
+    this.loadoutScreen = new LoadoutScreen(this.save);
   }
 
   /**
    * Show the LoadoutScreen, then begin the game loop once the player deploys.
-   * Call this instead of _startImmediately() on fresh game start.
+   * Call this on fresh game start.
    */
   start() {
     this.loadoutScreen.show((selection) => {
       this.currentLoadout = selection;
-      console.info(`[Game] Loadout selected — tank:${selection.tank} gun:${selection.gun} melee:${selection.melee}`);
+      // Persist the selection so it survives a page reload.
+      this.save.setLoadout(selection.tank, selection.gun, selection.melee);
+      this.save.save();
+      console.info(
+        `[Game] Loadout selected — tank:${selection.tank} ` +
+        `gun:${selection.gun} melee:${selection.melee}`
+      );
       this._startImmediately();
     });
   }
@@ -356,13 +390,17 @@ export class Game {
 
   /**
    * Called by CollisionSystem when the player's tank HP reaches 0.
-   * The tank is already marked dead in TeamManager (via enemies.remove adapter),
-   * which may trigger onTeamEliminated → MatchManager handles round/match end.
+   * Marks the player's slot dead in TeamManager so `isTeamEliminated(0)` can
+   * fire, removing the mesh from the scene and triggering the MatchManager
+   * round-end / match-end flow if all allies are also gone.
    */
   _onPlayerTankDestroyed() {
     // Notify StatsTracker to stop the survival timer for this round.
     this.stats.recordPlayerDeath();
-    // MatchOverlay handles ROUND_END / MATCH_END display.
+    // Mark player dead in TeamManager: removes mesh, checks team elimination.
+    // Without this call the player's slot stays alive=true and the team can
+    // never be eliminated, stalling the round indefinitely.
+    this.teams.killTank(this.player);
     console.info('[Game] Player tank destroyed.');
   }
 
@@ -371,12 +409,17 @@ export class Game {
    * Called by the "Play Again" button in MatchOverlay.
    */
   restart() {
-    // Stop the game loop while the loadout screen is shown.
+    // Pause the game loop while the loadout screen is shown.
     this.isRunning = false;
 
     this.loadoutScreen.show((selection) => {
       this.currentLoadout = selection;
-      console.info(`[Game] Loadout updated — tank:${selection.tank} gun:${selection.gun} melee:${selection.melee}`);
+      this.save.setLoadout(selection.tank, selection.gun, selection.melee);
+      this.save.save();
+      console.info(
+        `[Game] Loadout updated — tank:${selection.tank} ` +
+        `gun:${selection.gun} melee:${selection.melee}`
+      );
 
       this.score = 0;
       // Reset match state machine first (no team events should fire during reset)

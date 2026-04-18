@@ -2,16 +2,18 @@
  * StatsTracker — per-round and match-aggregate performance tracking.
  *
  * Tracks (per round, for the player):
- *  - damageDealt  : total HP damage dealt to enemy tanks
- *  - kills        : enemy tanks destroyed by the player (last-hit)
- *  - assists      : enemy tanks the player damaged ≥30% of maxHP, killed by someone else
- *  - survived     : whether the player's tank was alive when the round ended
- *  - survivalTime : seconds the player's tank was alive in the round
+ *  - damageDealt    : total HP damage dealt to enemy tanks
+ *  - damageReceived : total HP damage the player's tank absorbed (for flawless detection)
+ *  - kills          : enemy tanks destroyed by the player (last-hit)
+ *  - assists        : enemy tanks the player damaged ≥30% of maxHP, killed by someone else
+ *  - survived       : whether the player's tank was alive when the round ended
+ *  - survivalTime   : seconds the player's tank was alive in the round
  *
  * Usage:
  *  const stats = new StatsTracker();
  *  stats.startRound();                             // call before each round begins
  *  stats.recordPlayerDamage(tank, amount);         // on every player-hit
+ *  stats.recordPlayerDamageTaken(amount);          // on every hit the player's tank receives
  *  stats.recordTankKilled(tank, isPlayerKill);     // on every enemy tank death
  *  stats.update(dt);                               // in game loop for survival time
  *  const result = stats.endRound(playerAlive);     // at round end
@@ -128,6 +130,17 @@ export class StatsTracker {
   }
 
   /**
+   * Record damage the player's own tank received this round.
+   * Used to determine whether a round was flawless (zero damage taken).
+   * Call every time a projectile or ability hits the player's tank.
+   *
+   * @param {number} amount — HP damage absorbed by the player's tank
+   */
+  recordPlayerDamageTaken(amount) {
+    this._current.damageReceived += amount;
+  }
+
+  /**
    * Notify StatsTracker that the player's own tank has been destroyed.
    * Stops survival-time accumulation for the round.
    */
@@ -188,12 +201,13 @@ export class StatsTracker {
     const totals = allRounds.reduce(
       (acc, r) => ({
         damageDealt: acc.damageDealt + r.damageDealt,
+        damageReceived: acc.damageReceived + r.damageReceived,
         kills: acc.kills + r.kills,
         assists: acc.assists + r.assists,
         roundsSurvived: acc.roundsSurvived + (r.survived ? 1 : 0),
         totalSurvivalTime: acc.totalSurvivalTime + r.survivalTime,
       }),
-      { damageDealt: 0, kills: 0, assists: 0, roundsSurvived: 0, totalSurvivalTime: 0 }
+      { damageDealt: 0, damageReceived: 0, kills: 0, assists: 0, roundsSurvived: 0, totalSurvivalTime: 0 }
     );
 
     return { rounds: allRounds, totals };
@@ -219,6 +233,7 @@ export class StatsTracker {
   _emptyRound() {
     return {
       damageDealt: 0,
+      damageReceived: 0,
       kills: 0,
       assists: 0,
       survived: false,
@@ -229,15 +244,17 @@ export class StatsTracker {
 
 /**
  * @typedef {{
- *   damageDealt:  number,
- *   kills:        number,
- *   assists:      number,
- *   survived:     boolean,
- *   survivalTime: number
+ *   damageDealt:    number,
+ *   damageReceived: number,
+ *   kills:          number,
+ *   assists:        number,
+ *   survived:       boolean,
+ *   survivalTime:   number
  * }} RoundStats
  *
  * @typedef {{
  *   damageDealt:       number,
+ *   damageReceived:    number,
  *   kills:             number,
  *   assists:           number,
  *   roundsSurvived:    number,

@@ -7,16 +7,16 @@
  *
  * Integration pattern (from Game.js):
  *
- *   this.loadout = new LoadoutScreen(inventory);
+ *   this.loadoutScreen = new LoadoutScreen(this.save);
  *   // Show before first match and after each MATCH_END:
- *   this.loadout.show((selection) => {
+ *   this.loadoutScreen.show((selection) => {
  *     // selection = { tank, gun, melee }
- *     this.start();
+ *     this._startImmediately();
  *   });
  *
- * The screen reads owned items from PlayerInventory and falls back to the
- * previously selected loadout as the default selection. On "Deploy", it calls
- * inventory.setLoadout(selection) then invokes the onDeploy callback.
+ * The screen reads owned items and equipped loadout from SaveSystem.getProfile()
+ * and on "Deploy" invokes the callback with the selection — Game.js is responsible
+ * for calling save.setLoadout() and save.save() so the choice persists.
  *
  * DOM requirements (index.html):
  *   #loadout-overlay        — outer full-screen container
@@ -30,32 +30,32 @@
  *   #loadout-selected-melee — selected melee summary label
  */
 
-import { TANK_DEFS, getTankDef } from '../data/TankDefs.js';
-import { WEAPON_DEFS, getWeaponDef } from '../data/WeaponDefs.js';
+import { TankDefs, TANK_ORDER } from '../data/TankDefs.js';
+import { GunDefs, MeleeDefs, GUN_ORDER, MELEE_ORDER } from '../data/WeaponDefs.js';
 
 export class LoadoutScreen {
   /**
-   * @param {import('../data/PlayerInventory.js').PlayerInventory} inventory
+   * @param {import('../systems/SaveSystem.js').SaveSystem} save
    */
-  constructor(inventory) {
-    this.inventory = inventory;
+  constructor(save) {
+    this.save = save;
 
-    /** @private @type {((selection: import('../data/PlayerInventory.js').LoadoutSelection) => void)|null} */
+    /** @private @type {((selection: {tank:string,gun:string,melee:string}) => void)|null} */
     this._onDeployCb = null;
 
-    /** @private Current selections (updated as player clicks cards). */
-    this._selection = { ...inventory.getLoadout() };
+    /** @private Current selection — initialised from saved profile each show(). */
+    this._sel = { tank: 'standard', gun: 'pistol', melee: 'combatKnife' };
 
-    // DOM references
-    this._overlay      = document.getElementById('loadout-overlay');
-    this._tankGrid     = document.getElementById('loadout-tank-grid');
-    this._gunGrid      = document.getElementById('loadout-gun-grid');
-    this._meleeGrid    = document.getElementById('loadout-melee-grid');
-    this._deployBtn    = document.getElementById('loadout-deploy-btn');
-    this._moneyEl      = document.getElementById('loadout-money');
-    this._selTankEl    = document.getElementById('loadout-selected-tank');
-    this._selGunEl     = document.getElementById('loadout-selected-gun');
-    this._selMeleeEl   = document.getElementById('loadout-selected-melee');
+    // DOM references — resolved once (elements are static in index.html)
+    this._overlay    = document.getElementById('loadout-overlay');
+    this._tankGrid   = document.getElementById('loadout-tank-grid');
+    this._gunGrid    = document.getElementById('loadout-gun-grid');
+    this._meleeGrid  = document.getElementById('loadout-melee-grid');
+    this._deployBtn  = document.getElementById('loadout-deploy-btn');
+    this._moneyEl    = document.getElementById('loadout-money');
+    this._selTankEl  = document.getElementById('loadout-selected-tank');
+    this._selGunEl   = document.getElementById('loadout-selected-gun');
+    this._selMeleeEl = document.getElementById('loadout-selected-melee');
 
     if (this._deployBtn) {
       this._deployBtn.addEventListener('click', () => this._deploy());
@@ -67,22 +67,29 @@ export class LoadoutScreen {
   // ---------------------------------------------------------------------------
 
   /**
-   * Show the loadout screen. Rebuilds grids each time (inventory may have changed).
-   * @param {(selection: import('../data/PlayerInventory.js').LoadoutSelection) => void} onDeploy
+   * Show the loadout screen. Rebuilds grids each time so newly purchased items
+   * (from the shop) appear without requiring a reload.
+   * @param {(selection: {tank:string,gun:string,melee:string}) => void} onDeploy
    */
   show(onDeploy) {
     this._onDeployCb = onDeploy;
-    // Sync selection to whatever is currently saved (may differ from last show).
-    this._selection = { ...this.inventory.getLoadout() };
 
-    this._render();
+    // Sync selection from persisted profile.
+    const profile = this.save.getProfile();
+    this._sel = {
+      tank:  profile.equippedTankClass || 'standard',
+      gun:   profile.equippedPrimary   || 'pistol',
+      melee: profile.equippedMelee     || 'combatKnife',
+    };
+
+    this._render(profile);
 
     if (this._overlay) {
       this._overlay.classList.remove('hidden');
     }
   }
 
-  /** Hide the loadout screen. */
+  /** Hide the loadout screen without triggering onDeploy. */
   hide() {
     if (this._overlay) {
       this._overlay.classList.add('hidden');
@@ -93,59 +100,84 @@ export class LoadoutScreen {
   // Rendering
   // ---------------------------------------------------------------------------
 
-  /** @private Rebuild all card grids and update summary labels. */
-  _render() {
-    this._renderTankGrid();
-    this._renderWeaponGrid('gun',   this._gunGrid);
-    this._renderWeaponGrid('melee', this._meleeGrid);
+  /**
+   * @private
+   * @param {import('../systems/SaveSystem.js').PlayerProfile} profile
+   */
+  _render(profile) {
+    this._renderTankGrid(profile.ownedTanks);
+    this._renderGunGrid(profile.ownedWeapons);
+    this._renderMeleeGrid(profile.ownedMelee);
     this._updateSummary();
-    this._updateMoney();
+    this._updateMoney(profile.money);
   }
 
-  /** @private */
-  _renderTankGrid() {
+  /**
+   * @private
+   * @param {string[]} ownedIds
+   */
+  _renderTankGrid(ownedIds) {
     if (!this._tankGrid) {
       return;
     }
     this._tankGrid.innerHTML = '';
+    const owned = new Set(ownedIds);
 
-    const ownedIds = new Set(this.inventory.getOwnedTanks());
-
-    for (const def of TANK_DEFS) {
-      const owned    = ownedIds.has(def.id);
-      const selected = this._selection.tank === def.id;
-      const card     = this._makeTankCard(def, owned, selected);
+    for (const id of TANK_ORDER) {
+      const def = TankDefs[id];
+      if (!def) {
+        continue;
+      }
+      const card = this._makeTankCard(def, owned.has(id), this._sel.tank === id);
       this._tankGrid.appendChild(card);
     }
   }
 
   /**
    * @private
-   * @param {'gun'|'melee'} type
-   * @param {HTMLElement|null} container
+   * @param {string[]} ownedIds
    */
-  _renderWeaponGrid(type, container) {
-    if (!container) {
+  _renderGunGrid(ownedIds) {
+    if (!this._gunGrid) {
       return;
     }
-    container.innerHTML = '';
+    this._gunGrid.innerHTML = '';
+    const owned = new Set(ownedIds);
 
-    const owned    = new Set(type === 'gun' ? this.inventory.getOwnedGuns() : this.inventory.getOwnedMelee());
-    const selId    = type === 'gun' ? this._selection.gun : this._selection.melee;
-    const weapons  = WEAPON_DEFS.filter(w => w.type === type);
-
-    for (const def of weapons) {
-      const isOwned    = owned.has(def.id);
-      const isSelected = selId === def.id;
-      const card       = this._makeWeaponCard(def, isOwned, isSelected, type);
-      container.appendChild(card);
+    for (const id of GUN_ORDER) {
+      const def = GunDefs[id];
+      if (!def) {
+        continue;
+      }
+      const card = this._makeWeaponCard(def, owned.has(id), this._sel.gun === id, 'gun');
+      this._gunGrid.appendChild(card);
     }
   }
 
   /**
-   * Build a tank selection card.
    * @private
-   * @param {import('../data/TankDefs.js').TankDef} def
+   * @param {string[]} ownedIds
+   */
+  _renderMeleeGrid(ownedIds) {
+    if (!this._meleeGrid) {
+      return;
+    }
+    this._meleeGrid.innerHTML = '';
+    const owned = new Set(ownedIds);
+
+    for (const id of MELEE_ORDER) {
+      const def = MeleeDefs[id];
+      if (!def) {
+        continue;
+      }
+      const card = this._makeWeaponCard(def, owned.has(id), this._sel.melee === id, 'melee');
+      this._meleeGrid.appendChild(card);
+    }
+  }
+
+  /**
+   * @private
+   * @param {object} def - TankDef from TankDefs
    * @param {boolean} owned
    * @param {boolean} selected
    * @returns {HTMLElement}
@@ -153,20 +185,18 @@ export class LoadoutScreen {
   _makeTankCard(def, owned, selected) {
     const card = document.createElement('button');
     card.className = [
-      'ls-card',
-      'ls-tank-card',
+      'ls-card ls-tank-card',
       selected ? 'ls-card-selected' : '',
       !owned   ? 'ls-card-locked'   : '',
     ].join(' ').trim();
-
     card.dataset.id = def.id;
 
-    // Color swatch
+    // Color swatch — use colorBody hex (stored as number, convert to CSS hex)
     const swatch = document.createElement('div');
     swatch.className = 'ls-tank-swatch';
-    swatch.style.background = def.color;
+    swatch.style.background = '#' + def.colorBody.toString(16).padStart(6, '0');
 
-    // Text block
+    // Info block
     const info = document.createElement('div');
     info.className = 'ls-card-info';
 
@@ -180,10 +210,11 @@ export class LoadoutScreen {
 
     const statsLine = document.createElement('div');
     statsLine.className = 'ls-card-stats';
+    const armorPct = Math.round(def.armor * 100);
     statsLine.innerHTML =
-      `HP <b>${def.baseHP}</b>&nbsp;&nbsp;` +
-      `SPD <b>${def.baseSpeed.toFixed(1)}×</b>&nbsp;&nbsp;` +
-      `ARM <b>${Math.round(def.baseArmor * 100)}%</b>` +
+      `HP <b>${def.hp}</b>&nbsp;&nbsp;` +
+      `SPD <b>${def.speed}</b>&nbsp;&nbsp;` +
+      `ARM <b>${armorPct}%</b>` +
       (def.ability ? `&nbsp;&nbsp;⚡ <b>${def.ability}</b>` : '');
 
     const leagueLine = document.createElement('div');
@@ -191,13 +222,13 @@ export class LoadoutScreen {
     if (!owned) {
       leagueLine.textContent = def.price === 0
         ? 'STARTER'
-        : `$${def.price.toLocaleString()} · ${def.league.toUpperCase()}`;
+        : `$${def.price.toLocaleString()} · ${def.leagueRequired.toUpperCase()}`;
       leagueLine.style.color = '#f44336';
     } else if (selected) {
       leagueLine.textContent = 'SELECTED';
       leagueLine.style.color = '#4caf50';
     } else {
-      leagueLine.textContent = def.league.toUpperCase();
+      leagueLine.textContent = def.leagueRequired.toUpperCase();
     }
 
     info.appendChild(nameLine);
@@ -212,16 +243,16 @@ export class LoadoutScreen {
       card.addEventListener('click', () => this._selectTank(def.id));
     } else {
       card.disabled = true;
-      card.title = `Requires ${def.league} league and $${def.price.toLocaleString()}`;
+      card.title = `Requires ${def.leagueRequired} league` +
+        (def.price > 0 ? ` and $${def.price.toLocaleString()}` : '');
     }
 
     return card;
   }
 
   /**
-   * Build a weapon selection card.
    * @private
-   * @param {import('../data/WeaponDefs.js').WeaponDef} def
+   * @param {object} def - GunDef or MeleeDef
    * @param {boolean} owned
    * @param {boolean} selected
    * @param {'gun'|'melee'} type
@@ -230,12 +261,10 @@ export class LoadoutScreen {
   _makeWeaponCard(def, owned, selected, type) {
     const card = document.createElement('button');
     card.className = [
-      'ls-card',
-      'ls-weapon-card',
+      'ls-card ls-weapon-card',
       selected ? 'ls-card-selected' : '',
       !owned   ? 'ls-card-locked'   : '',
     ].join(' ').trim();
-
     card.dataset.id = def.id;
 
     const icon = document.createElement('div');
@@ -258,7 +287,7 @@ export class LoadoutScreen {
     if (!owned) {
       abilityLine.textContent = def.price === 0
         ? 'STARTER'
-        : `$${def.price.toLocaleString()} · ${def.league.toUpperCase()}`;
+        : `$${def.price.toLocaleString()} · ${def.leagueRequired.toUpperCase()}`;
       abilityLine.style.color = '#f44336';
     } else if (def.ability) {
       abilityLine.textContent = `⚡ ${def.ability}`;
@@ -267,7 +296,7 @@ export class LoadoutScreen {
       abilityLine.textContent = 'SELECTED';
       abilityLine.style.color = '#4caf50';
     } else {
-      abilityLine.textContent = def.league.toUpperCase();
+      abilityLine.textContent = def.leagueRequired.toUpperCase();
     }
 
     info.appendChild(nameLine);
@@ -281,7 +310,8 @@ export class LoadoutScreen {
       card.addEventListener('click', () => this._selectWeapon(type, def.id));
     } else {
       card.disabled = true;
-      card.title = `Requires ${def.league} league and $${def.price.toLocaleString()}`;
+      card.title = `Requires ${def.leagueRequired} league` +
+        (def.price > 0 ? ` and $${def.price.toLocaleString()}` : '');
     }
 
     return card;
@@ -293,9 +323,9 @@ export class LoadoutScreen {
 
   /** @private */
   _selectTank(id) {
-    this._selection.tank = id;
-    // Re-render just the tank grid to update selected state.
-    this._renderTankGrid();
+    this._sel.tank = id;
+    const profile = this.save.getProfile();
+    this._renderTankGrid(profile.ownedTanks);
     this._updateSummary();
   }
 
@@ -305,35 +335,35 @@ export class LoadoutScreen {
    * @param {string} id
    */
   _selectWeapon(type, id) {
+    const profile = this.save.getProfile();
     if (type === 'gun') {
-      this._selection.gun = id;
-      this._renderWeaponGrid('gun', this._gunGrid);
+      this._sel.gun = id;
+      this._renderGunGrid(profile.ownedWeapons);
     } else {
-      this._selection.melee = id;
-      this._renderWeaponGrid('melee', this._meleeGrid);
+      this._sel.melee = id;
+      this._renderMeleeGrid(profile.ownedMelee);
     }
     this._updateSummary();
   }
 
   /** @private */
   _updateSummary() {
-    try {
-      const tank  = getTankDef(this._selection.tank);
-      const gun   = getWeaponDef(this._selection.gun);
-      const melee = getWeaponDef(this._selection.melee);
+    const tank  = TankDefs[this._sel.tank];
+    const gun   = GunDefs[this._sel.gun];
+    const melee = MeleeDefs[this._sel.melee];
 
-      if (this._selTankEl)  this._selTankEl.textContent  = tank.name;
-      if (this._selGunEl)   this._selGunEl.textContent   = gun.name;
-      if (this._selMeleeEl) this._selMeleeEl.textContent = melee.name;
-    } catch (_e) {
-      // ids may be stale during initial render — ignore
-    }
+    if (this._selTankEl)  this._selTankEl.textContent  = tank  ? tank.name  : this._sel.tank;
+    if (this._selGunEl)   this._selGunEl.textContent   = gun   ? gun.name   : this._sel.gun;
+    if (this._selMeleeEl) this._selMeleeEl.textContent = melee ? melee.name : this._sel.melee;
   }
 
-  /** @private */
-  _updateMoney() {
+  /**
+   * @private
+   * @param {number} money
+   */
+  _updateMoney(money) {
     if (this._moneyEl) {
-      this._moneyEl.textContent = `$${this.inventory.getMoney().toLocaleString()}`;
+      this._moneyEl.textContent = `$${money.toLocaleString()}`;
     }
   }
 
@@ -343,12 +373,9 @@ export class LoadoutScreen {
 
   /** @private */
   _deploy() {
-    // Persist the selection.
-    this.inventory.setLoadout(this._selection);
     this.hide();
-
     if (this._onDeployCb) {
-      this._onDeployCb({ ...this._selection });
+      this._onDeployCb({ ...this._sel });
     }
   }
 }
