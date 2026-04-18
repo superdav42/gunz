@@ -26,6 +26,15 @@ export class Tank {
     this.fireCooldown = 0;
     this.fireRate = 0.3; // seconds between shots
 
+    /**
+     * Damage multiplier for projectiles fired by this tank.
+     * AI enemies set this via AIController.applyLeagueScalingToTeam()
+     * based on the player's current league (VISION.md AI scaling table).
+     * Default 1.0 (no modification). Does not reset between rounds — call
+     * applyLeagueScalingToTeam() once after teams are created.
+     */
+    this.damageMultiplier = 1.0;
+
     // Per-round combat stats — displayed on the scoreboard (t013)
     this.kills = 0;
     this.damageDealt = 0;
@@ -142,7 +151,7 @@ export class Tank {
       isPlayerOwned: this.isPlayer,
       ownerTank: this,
       speed: 50,
-      damage: 25,
+      damage: 25 * this.damageMultiplier,
     });
   }
 
