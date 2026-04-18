@@ -90,6 +90,15 @@ export class MapLayout {
      */
     this._riverZones = [];
 
+    /**
+     * Optional StructureSystem reference — injected after construction via
+     * setStructureSystem().  When set, isInRiver() bypasses the penalty for
+     * entities standing on a live bridge plank (t049).
+     *
+     * @type {import('../systems/StructureSystem.js').StructureSystem|null}
+     */
+    this._structureSystem = null;
+
     this._buildSpawnZones();
     this._buildRivers();
   }
@@ -97,18 +106,40 @@ export class MapLayout {
   // ─── Public API ─────────────────────────────────────────────────────────────
 
   /**
-   * Returns true when the point (x, z) lies inside any river / mud zone.
-   * Used by movement systems to apply speed penalties.
+   * Register the StructureSystem so bridge crossings can bypass the river
+   * speed penalty.  Call once in Game._initSystems() after both MapLayout and
+   * StructureSystem are constructed (t049).
    *
-   * @param {number} _x  — world X (unused; rivers span the full map width)
-   * @param {number} z   — world Z
+   * @param {import('../systems/StructureSystem.js').StructureSystem} ss
+   */
+  setStructureSystem(ss) {
+    this._structureSystem = ss;
+  }
+
+  /**
+   * Returns true when the point (x, z) lies inside a river / mud zone AND
+   * is not covered by a live bridge plank (t049: bridges bypass the penalty).
+   *
+   * @param {number} x  — world X
+   * @param {number} z  — world Z
    * @returns {boolean}
    */
-  isInRiver(_x, z) {
+  isInRiver(x, z) {
+    let inRiver = false;
     for (const zone of this._riverZones) {
-      if (z >= zone.minZ && z <= zone.maxZ) return true;
+      if (z >= zone.minZ && z <= zone.maxZ) {
+        inRiver = true;
+        break;
+      }
     }
-    return false;
+    if (!inRiver) return false;
+
+    // Bridge plank coverage bypasses the mud penalty (t049).
+    if (this._structureSystem !== null && this._structureSystem.hasBridgeAt(x, z)) {
+      return false;
+    }
+
+    return true;
   }
 
   /**
