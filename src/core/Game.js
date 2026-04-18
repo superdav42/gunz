@@ -11,6 +11,7 @@ import { KillFeed } from '../ui/KillFeed.js';
 import { MatchOverlay } from '../ui/MatchOverlay.js';
 import { Scoreboard } from '../ui/Scoreboard.js';
 import { LoadoutScreen } from '../ui/LoadoutScreen.js';
+import { ShopMenu } from '../ui/ShopMenu.js';
 import { CameraController } from '../systems/CameraController.js';
 import { TeamManager } from './TeamManager.js';
 import { AIController } from '../systems/AIController.js';
@@ -245,6 +246,14 @@ export class Game {
     // LoadoutScreen (t018): pre-match tank + weapon selection.
     // Uses SaveSystem for owned items and equipped loadout persistence.
     this.loadoutScreen = new LoadoutScreen(this.save);
+
+    // ShopMenu (t017): between-match shop with 4 tabs.
+    // Opened via the "Shop" button on the match-end overlay.
+    this.shopMenu = new ShopMenu(this.save, this.economy);
+    this.shopMenu.onClose(() => {
+      // When the player closes the shop, show the loadout screen for the next match.
+      this.isRunning = false;
+    });
   }
 
   /**
@@ -402,6 +411,16 @@ export class Game {
     // never be eliminated, stalling the round indefinitely.
     this.teams.killTank(this.player);
     console.info('[Game] Player tank destroyed.');
+  }
+
+  /**
+   * Open the between-match shop (t017).
+   * Called from the "Shop" button in MatchOverlay.
+   * Pauses the game loop until the player closes the shop.
+   */
+  openShop() {
+    this.isRunning = false;
+    this.shopMenu.open();
   }
 
   /**
