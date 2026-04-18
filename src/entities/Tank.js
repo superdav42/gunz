@@ -179,5 +179,11 @@ export class Tank {
     this.fireCooldown = 0;
     this.kills = 0;
     this.damageDealt = 0;
+    // Reset turret to face forward (local rotation.y = 0).
+    // Loadout properties (tank class, weapons, upgrades — added in future tasks)
+    // are intentionally NOT reset here — they persist across rounds per VISION.md.
+    if (this.turret) {
+      this.turret.rotation.y = 0;
+    }
   }
 }
