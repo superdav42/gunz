@@ -163,3 +163,33 @@ export function getLeagueForLp(lp) {
   }
   return result;
 }
+
+/**
+ * Return the league ID string (not the def object) for a given LP total.
+ * Used by LeagueSystem for promotion/demotion resolution.
+ *
+ * @param {number} lp
+ * @returns {string}  e.g. 'bronze', 'silver'
+ */
+export function getLeagueForLP(lp) {
+  return getLeagueForLp(lp).id;
+}
+
+/**
+ * Return the minimum LP the player may hold while in the given league
+ * without triggering a demotion check.
+ * For bronze (the floor league) this is 0.
+ * For all other leagues this is the league's own lpRequired value,
+ * so losing LP below that threshold resolves a demotion on the next pass.
+ *
+ * @param {string} leagueId
+ * @returns {number}
+ */
+export function lpFloorForLeague(leagueId) {
+  // Bronze has no lower league to demote into — floor is 0.
+  if (leagueId === 'bronze' || leagueId === LEAGUE_ORDER[0]) {
+    return 0;
+  }
+  // For all other leagues, the floor is 0 (LP never goes negative).
+  return 0;
+}

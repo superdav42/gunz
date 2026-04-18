@@ -304,9 +304,9 @@ export class Game {
     // Uses SaveSystem for owned items and equipped loadout persistence.
     this.loadoutScreen = new LoadoutScreen(this.save);
 
-    // ShopMenu (t017): between-match shop with 4 tabs.
-    // Opened via the "Shop" button on the match-end overlay.
-    this.shopMenu = new ShopMenu(this.save, this.economy);
+    // ShopMenu (t022): between-match shop with 4 tabs + league gating.
+    // Passes LeagueSystem so the shop can lock items by league and enforce upgrade tier caps.
+    this.shopMenu = new ShopMenu(this.save, this.economy, this.league);
     this.shopMenu.onClose(() => {
       // When the player closes the shop, show the loadout screen for the next match.
       this.isRunning = false;
