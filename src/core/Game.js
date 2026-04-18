@@ -19,6 +19,7 @@ import { MatchManager } from './MatchManager.js';
 import { StatsTracker } from '../systems/StatsTracker.js';
 import { EconomySystem } from '../systems/EconomySystem.js';
 import { SaveSystem } from '../systems/SaveSystem.js';
+import { getLeagueDef } from '../data/LeagueDefs.js';
 
 export class Game {
   constructor(canvas) {
@@ -197,6 +198,9 @@ export class Game {
         this.wrecks.reset();
         // Respawn the destructible tree set so the field is full again next round.
         this.trees.reset();
+        // Clear per-tank AI reaction timers so enemies don't carry over mid-fire
+        // state from the previous round.
+        this.aiController.reset();
         this._playerDustTimer = 0;
         this._enemyDustTimer = 0;
       })
@@ -227,13 +231,31 @@ export class Game {
         this.save.save();
       });
 
-    // AIController drives all 10 AI tanks (team 0 slots 1-5 as allies, team 1 all 6 as enemies)
+    // Resolve the player's current league def from the save profile.
+    // Falls back to 'bronze' if the stored id is invalid (e.g. corrupt save).
+    const profileLeagueId = this.save.getProfile().leagueId || 'bronze';
+    let currentLeagueDef;
+    try {
+      currentLeagueDef = getLeagueDef(profileLeagueId);
+    } catch (_) {
+      currentLeagueDef = getLeagueDef('bronze');
+    }
+
+    // AIController drives all 10 AI tanks (team 0 slots 1-5 as allies, team 1 all 6 as enemies).
+    // Passes the league def so enemy AI uses the correct difficulty multipliers.
     this.aiController = new AIController(
       this.teams,
       this.projectiles,
       this.particles,
-      this.terrain
+      this.terrain,
+      currentLeagueDef
     );
+
+    // Apply HP and damage multipliers to the enemy team (team 1) based on league.
+    // Ally team (team 0, starting at slot 1) is NOT HP/damage scaled — only enemies scale.
+    // applyLeagueScalingToTeam() must be called once here; values persist through
+    // round resets because Tank.reset() restores health to the (already-scaled) maxHealth.
+    this.aiController.applyLeagueScalingToTeam(1, 0);
 
     this.hud = new HUD();
     this.killFeed = new KillFeed();
