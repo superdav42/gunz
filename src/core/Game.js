@@ -19,6 +19,8 @@ import { MatchManager } from './MatchManager.js';
 import { StatsTracker } from '../systems/StatsTracker.js';
 import { EconomySystem } from '../systems/EconomySystem.js';
 import { SaveSystem } from '../systems/SaveSystem.js';
+import { LeagueSystem } from '../systems/LeagueSystem.js';
+import { LeagueDisplay } from '../ui/LeagueDisplay.js';
 import { getLeagueDef } from '../data/LeagueDefs.js';
 
 export class Game {
@@ -165,6 +167,18 @@ export class Game {
     this.save = new SaveSystem();
     this.save.load();
 
+    // LeagueSystem: tracks LP and current league in memory (t020).
+    // Seeded from the saved profile so progression carries over between sessions.
+    const savedProfile = this.save.getProfile();
+    this.league = new LeagueSystem({
+      leagueId: savedProfile.leagueId,
+      lp: savedProfile.leaguePoints,
+    });
+
+    // LeagueDisplay: badge + LP bar overlay shown at match end (t023).
+    this.leagueDisplay = new LeagueDisplay();
+    this.leagueDisplay.update(this.league.leagueId, this.league.lp);
+
     // StatsTracker: per-round damage dealt, kills, assists, survival (t010)
     this.stats = new StatsTracker();
     this.stats.startRound();
@@ -226,9 +240,20 @@ export class Game {
           `New balance: $${this.economy.balance}`
         );
 
+        // Apply LP change based on match score (t020/t023).
+        // roundWins = [team0Wins, team1Wins]; team 0 = player.
+        const [pw, ew] = this.match.roundWins;
+        const leagueResult = this.league.applyMatchResult({ playerWins: pw, enemyWins: ew });
+        this.save.updateLeague(this.league.leagueId, this.league.lp);
+
         // Persist updated balance to localStorage via SaveSystem (t015).
         this.save.updateMoney(this.economy.balance);
         this.save.save();
+
+        // Show league display and animate the LP change (t023).
+        this.leagueDisplay.show();
+        // Brief delay lets the MATCH_END overlay render first.
+        setTimeout(() => this.leagueDisplay.animateChange(leagueResult), 600);
       });
 
     // Resolve the player's current league def from the save profile.
@@ -450,6 +475,8 @@ export class Game {
    * Called by the "Play Again" button in MatchOverlay.
    */
   restart() {
+    // Hide league display overlay before returning to play.
+    this.leagueDisplay.hide();
     // Pause the game loop while the loadout screen is shown.
     this.isRunning = false;
 
