@@ -51,6 +51,12 @@ export class MatchOverlay {
       restartBtn.addEventListener('click', () => this.game.restart());
     }
 
+    // Wire shop button (t017)
+    const shopBtn = document.getElementById('match-shop-btn');
+    if (shopBtn) {
+      shopBtn.addEventListener('click', () => this.game.openShop());
+    }
+
     this._lastState = null;
   }
 
