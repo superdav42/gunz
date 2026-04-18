@@ -395,12 +395,14 @@ export class Game {
 
     // HUD — pass live round stats for the counters.
     // Use playerController so values reflect the active entity (tank or soldier).
+    // maxHealth is passed so the bar fills to 100 % at full soldier HP (30), not 30 %.
     const roundStats = this.stats.getCurrentRoundStats();
     this.hud.update({
-      score:  this.score,
-      health: this.playerController.health,
-      ammo:   this.playerController.ammo,
-      stats:  roundStats,
+      score:     this.score,
+      health:    this.playerController.health,
+      maxHealth: this.playerController.maxHealth,
+      ammo:      this.playerController.ammo,
+      stats:     roundStats,
     });
 
     // Scoreboard: show when Tab is held

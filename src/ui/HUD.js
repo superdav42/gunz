@@ -14,13 +14,19 @@ export class HUD {
   }
 
   /**
-   * @param {{ score: number, health: number, ammo: number, stats?: import('../systems/StatsTracker.js').RoundStats }} data
+   * @param {object}  data
+   * @param {number}  data.score
+   * @param {number}  data.health      — current HP of the active entity
+   * @param {number}  [data.maxHealth=100] — max HP; pass soldier.maxHealth (30) so the
+   *                                     bar fills to 100 % at full soldier HP, not 30 %
+   * @param {number|string|null} data.ammo — ammo count, null for soldiers (∞)
+   * @param {import('../systems/StatsTracker.js').RoundStats} [data.stats]
    */
-  update({ score, health, ammo, stats }) {
+  update({ score, health, maxHealth = 100, ammo, stats }) {
     this.scoreEl.textContent = score;
-    this.ammoEl.textContent = ammo;
+    this.ammoEl.textContent  = ammo ?? '∞';
 
-    const pct = Math.max(0, (health / 100) * 100);
+    const pct = Math.max(0, (health / maxHealth) * 100);
     this.healthBar.style.width = `${pct}%`;
 
     if (pct > 50) {
