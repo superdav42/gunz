@@ -29,24 +29,28 @@
  *  onKillFeed(killer, victim)            — called on every tank kill for the kill feed UI
  *    killer: display name of the entity that scored the kill ('Player', 'Enemy #2', …)
  *    victim: display name of the destroyed tank
+ *  onWallHit(position)                   — called on every non-lethal shell hit on a building wall
+ *  onWallDestroy(position)               — called when a shell or tank destroys a building wall
  */
 export class CollisionSystem {
   /**
    * @param {object} opts
-   * @param {import('../entities/Terrain.js').Terrain}         opts.terrain
-   * @param {import('../entities/Tank.js').Tank}               opts.player
-   * @param {import('./EnemySystem.js').EnemySystem}           opts.enemies
-   * @param {import('./ProjectileSystem.js').ProjectileSystem} opts.projectiles
-   * @param {import('./TreeSystem.js').TreeSystem}             [opts.treeSystem]
-   * @param {import('./WreckSystem.js').WreckSystem}           [opts.wrecks]
+   * @param {import('../entities/Terrain.js').Terrain}             opts.terrain
+   * @param {import('../entities/Tank.js').Tank}                   opts.player
+   * @param {import('./EnemySystem.js').EnemySystem}               opts.enemies
+   * @param {import('./ProjectileSystem.js').ProjectileSystem}     opts.projectiles
+   * @param {import('./TreeSystem.js').TreeSystem}                 [opts.treeSystem]
+   * @param {import('./WreckSystem.js').WreckSystem}               [opts.wrecks]
+   * @param {import('./BuildingSystem.js').BuildingSystem}         [opts.buildingSystem]
    */
-  constructor({ terrain, player, enemies, projectiles, treeSystem = null, wrecks = null }) {
+  constructor({ terrain, player, enemies, projectiles, treeSystem = null, wrecks = null, buildingSystem = null }) {
     this.terrain = terrain;
     this.player = player;
     this.enemies = enemies;
     this.projectiles = projectiles;
     this.treeSystem = treeSystem;
     this.wrecks = wrecks;
+    this.buildingSystem = buildingSystem;
 
     this._onScoreAdd = null;
     this._onPlayerDeath = null;
@@ -57,6 +61,8 @@ export class CollisionSystem {
     this._onTreeHit = null;
     this._onTreeDestroy = null;
     this._onKillFeed = null;
+    this._onWallHit = null;
+    this._onWallDestroy = null;
 
     /**
      * Approximate half-width of a tank hull for obstacle push-back.
@@ -151,6 +157,18 @@ export class CollisionSystem {
     return this;
   }
 
+  /** @param {(position: import('three').Vector3) => void} cb */
+  onWallHit(cb) {
+    this._onWallHit = cb;
+    return this;
+  }
+
+  /** @param {(position: import('three').Vector3) => void} cb */
+  onWallDestroy(cb) {
+    this._onWallDestroy = cb;
+    return this;
+  }
+
   // ---------------------------------------------------------------------------
   // Per-frame entry point
   // ---------------------------------------------------------------------------
@@ -158,6 +176,10 @@ export class CollisionSystem {
   update() {
     this._checkProjectileCollisions();
     this._checkTankObstacleCollisions();
+    // Tank-smash building walls (tanks instantly destroy walls they drive into).
+    if (this.buildingSystem) {
+      this._checkTankBuildingCollisions();
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -289,6 +311,11 @@ export class CollisionSystem {
     // All projectiles vs destructible trees
     if (this.treeSystem) {
       this._checkProjectileTreeCollisions();
+    }
+
+    // All projectiles vs destructible building walls
+    if (this.buildingSystem) {
+      this._checkProjectileBuildingCollisions();
     }
 
     // Explosive projectiles that reach terrain level explode on impact. (t032)
@@ -570,5 +597,138 @@ export class CollisionSystem {
         }
       }
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Building collision helpers (t047)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Check every active projectile against every alive building wall.
+   *
+   * Uses an AABB check in XZ combined with a vertical bounds check (so shells
+   * flying at ground level below a wall base don't register).  Each wall
+   * half-extent is padded by PROJ_R to account for the shell's own width and
+   * prevent thin-wall tunnelling for slow-to-mid-speed shots.
+   *
+   * Explosive projectiles detonate on wall contact and apply splash as normal.
+   * Non-explosive shells deal 1 damage; WALL_HP = 3, so 3 hits destroy a wall.
+   */
+  _checkProjectileBuildingCollisions() {
+    const PROJ_R   = 0.35; // Shell radius buffer (world units)
+    const projectiles = this.projectiles.active;
+    const buildings   = this.buildingSystem.buildings;
+
+    for (let i = projectiles.length - 1; i >= 0; i--) {
+      const p  = projectiles[i];
+      const px = p.mesh.position.x;
+      const py = p.mesh.position.y;
+      const pz = p.mesh.position.z;
+
+      let consumed = false;
+
+      for (const building of buildings) {
+        if (consumed) break;
+
+        for (let wi = 0; wi < building.walls.length; wi++) {
+          const wall = building.walls[wi];
+          if (!wall.alive) continue;
+
+          // Padded AABB check in XZ plane
+          if (
+            px < wall.cx - wall.hw - PROJ_R || px > wall.cx + wall.hw + PROJ_R ||
+            pz < wall.cz - wall.hd - PROJ_R || pz > wall.cz + wall.hd + PROJ_R
+          ) continue;
+
+          // Vertical bounds: wall spans (mesh.y - WALL_H/2) to (mesh.y + WALL_H/2)
+          const wallMidY  = wall.mesh.position.y;
+          const wallMinY  = wallMidY - 1.75; // WALL_H/2 = 1.75
+          const wallMaxY  = wallMidY + 1.75;
+          if (py < wallMinY - PROJ_R || py > wallMaxY + PROJ_R) continue;
+
+          // Hit confirmed
+          const hitPos = p.mesh.position.clone();
+          this.projectiles.remove(i);
+
+          // Explosives trigger splash before damaging the wall.
+          if (p.splashRadius > 0) {
+            this._applySplashToEnemies(p, hitPos, null);
+            this._applySplashToPlayer(p, hitPos, null);
+            if (this._onExplosion) this._onExplosion(hitPos, p.splashRadius);
+          }
+
+          const destroyed = building.damageWall(wi, p.damage);
+          if (destroyed) {
+            if (this._onWallDestroy) this._onWallDestroy(hitPos);
+          } else if (!p.splashRadius) {
+            if (this._onWallHit) this._onWallHit(hitPos);
+          }
+
+          consumed = true;
+          break; // projectile consumed; skip remaining walls
+        }
+      }
+    }
+  }
+
+  /**
+   * Tank-smash mechanic: when a tank's circular footprint overlaps a building
+   * wall's AABB, the wall is instantly destroyed (tanks smash through walls).
+   *
+   * The tank is NOT pushed back — it continues moving through the destroyed
+   * wall gap.  This is intentional per the VISION ("Tanks smash through walls").
+   *
+   * All living tanks (player + all enemies) are checked each frame.
+   */
+  _checkTankBuildingCollisions() {
+    const buildings = this.buildingSystem.buildings;
+    const tankR     = this._tankRadius;
+
+    const tanks = [this.player, ...this.enemies.active];
+
+    for (const tank of tanks) {
+      const tx = tank.mesh.position.x;
+      const tz = tank.mesh.position.z;
+
+      for (const building of buildings) {
+        for (let wi = 0; wi < building.walls.length; wi++) {
+          const wall = building.walls[wi];
+          if (!wall.alive) continue;
+
+          if (!this._circleOverlapsAABB(tx, tz, tankR, wall.cx, wall.cz, wall.hw, wall.hd)) {
+            continue;
+          }
+
+          // Tank smash — instant destruction regardless of wall HP.
+          const wallPos = wall.mesh.position.clone();
+          building.damageWall(wi, 999); // 999 >> WALL_HP guarantees destruction
+          if (this._onWallDestroy) this._onWallDestroy(wallPos);
+        }
+      }
+    }
+  }
+
+  /**
+   * Returns true if a circle (cx, cz, r) overlaps an axis-aligned rectangle
+   * centred at (ax, az) with half-extents (hw, hd).
+   *
+   * Uses the standard "nearest point on AABB" approach which is correct for
+   * all relative positions (inside, outside, corner).
+   *
+   * @param {number} cx  Circle centre X.
+   * @param {number} cz  Circle centre Z.
+   * @param {number} r   Circle radius.
+   * @param {number} ax  AABB centre X.
+   * @param {number} az  AABB centre Z.
+   * @param {number} hw  AABB half-extent along X.
+   * @param {number} hd  AABB half-extent along Z.
+   * @returns {boolean}
+   */
+  _circleOverlapsAABB(cx, cz, r, ax, az, hw, hd) {
+    const nearX = Math.max(ax - hw, Math.min(cx, ax + hw));
+    const nearZ = Math.max(az - hd, Math.min(cz, az + hd));
+    const dx    = cx - nearX;
+    const dz    = cz - nearZ;
+    return dx * dx + dz * dz < r * r;
   }
 }
