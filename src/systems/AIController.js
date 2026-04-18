@@ -156,10 +156,11 @@ export class AIController {
 
   /**
    * Store the difficulty values from a league def into fast-access fields.
+   * Uses the `ai` sub-object from LeagueDefs (field: leagueDef.ai.*).
    * @param {object} leagueDef
    */
   _applyLeagueDef(leagueDef) {
-    this._scaling = leagueDef.aiScaling;
+    this._scaling = leagueDef.ai;
   }
 
   /**
@@ -282,7 +283,7 @@ export class AIController {
     const targetPos = target.mesh.position;
 
     // --- Choose difficulty values based on team role ---
-    const accuracy = isEnemyTeam ? this._scaling.accuracy : ALLY_ACCURACY;
+    const accuracy = isEnemyTeam ? this._scaling.aimAccuracy : ALLY_ACCURACY;
     const reactionTime = isEnemyTeam ? this._scaling.reactionTime : ALLY_REACTION_TIME;
 
     // --- Rotate hull toward target ---
