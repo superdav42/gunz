@@ -149,6 +149,40 @@ export class Tank {
     this.kills = 0;
     this.damageDealt = 0;
 
+    // ---------------------------------------------------------------------------
+    // Ability state — written and managed by TankAbilityEffects (t043).
+    // Fields are initialised here so Tank instances are always shape-consistent.
+    // ---------------------------------------------------------------------------
+
+    /**
+     * Energy Shield: when true, all incoming damage is absorbed (returns 0).
+     * TankAbilityEffects sets this on activation; clears after the duration.
+     * @type {boolean}
+     */
+    this.shielded = false;
+
+    /**
+     * Rocket Jump: while true, PlayerController and AIController skip terrain-
+     * follow so TankAbilityEffects can drive the Y coordinate along the arc.
+     * @type {boolean}
+     */
+    this.isJumping = false;
+
+    /**
+     * Lockdown Mode: while true, hull movement is suppressed.
+     * TankAbilityEffects clears this when the duration expires.
+     * @type {boolean}
+     */
+    this.isLockedDown = false;
+
+    /**
+     * Reactive Armor: number of hit-reduction charges remaining.
+     * Each incoming hit decrements this by 1 and deals half damage instead.
+     * TankAbilityEffects sets this to REACTIVE_ARMOR_CHARGES on activation.
+     * @type {number}
+     */
+    this.reactiveArmorCharges = 0;
+
     // Use class-defined colors as defaults; explicit overrides take priority.
     // _applyClassDef() has already stored this.colorBody / this.colorTurret.
     const palette = {
@@ -480,13 +514,32 @@ export class Tank {
   }
 
   /**
-   * Apply incoming damage, reduced by this tank's armor fraction.
+   * Apply incoming damage, respecting active ability protections and armor.
    *
-   * @param {number} amount — raw incoming damage (before armor reduction)
-   * @returns {number} — actual HP removed (post-armor, clamped to remaining HP)
+   * Processing order (applied in sequence):
+   *   1. Energy Shield  — absorbs ALL damage; returns 0 immediately.
+   *   2. Reactive Armor — halves the remaining damage per charge consumed.
+   *   3. Class Armor    — reduces by armor fraction (0–0.35).
+   *
+   * Returns the actual HP removed after all reductions.
+   *
+   * @param {number} amount — raw incoming damage (before all reductions)
+   * @returns {number} actual damage applied to health (0 if shielded)
    */
   takeDamage(amount) {
-    const reduced = amount * (1 - this.armor);
+    // 1. Energy Shield: absorb everything.
+    if (this.shielded) return 0;
+
+    let dmg = amount;
+
+    // 2. Reactive Armor: 50 % reduction for each charge.
+    if (this.reactiveArmorCharges > 0) {
+      dmg = dmg * 0.5;
+      this.reactiveArmorCharges--;
+    }
+
+    // 3. Class Armor: structural damage reduction.
+    const reduced = dmg * (1 - this.armor);
     const actual  = Math.min(reduced, this.health);
     this.health   = Math.max(0, this.health - reduced);
     return actual;
@@ -524,6 +577,15 @@ export class Tank {
     this.fireCooldown = 0;
     this.kills = 0;
     this.damageDealt = 0;
+
+    // Clear ability state so each round starts clean.
+    // TankAbilityEffects.reset() cancels any in-flight timed effects before
+    // Tank.reset() runs, so it is safe to zero these flags here.
+    this.shielded             = false;
+    this.isJumping            = false;
+    this.isLockedDown         = false;
+    this.reactiveArmorCharges = 0;
+
     // Reset turret to face forward (local rotation.y = 0).
     // Class stats (speed, armor, damage, etc.) and league-scaled maxHealth are
     // intentionally NOT reset here — they persist across rounds per VISION.md.

@@ -301,25 +301,35 @@ export class PlayerController {
     const moveSpeed = tank.speed;
     const turnSpeed = tank.turnRate;
 
-    const moving = input.forward || input.backward;
+    // Lockdown Mode (t043): suppress all hull movement while active.
+    // Turret can still track the target; firing continues at doubled rate.
+    const locked = tank.isLockedDown;
 
-    if (input.forward)  tank.mesh.translateZ(-moveSpeed * dt);
-    if (input.backward) tank.mesh.translateZ(moveSpeed * 0.6 * dt);
-    if (input.left)     tank.mesh.rotation.y += turnSpeed * dt;
-    if (input.right)    tank.mesh.rotation.y -= turnSpeed * dt;
+    const moving = !locked && (input.forward || input.backward);
+
+    if (!locked) {
+      if (input.forward)  tank.mesh.translateZ(-moveSpeed * dt);
+      if (input.backward) tank.mesh.translateZ(moveSpeed * 0.6 * dt);
+      if (input.left)     tank.mesh.rotation.y += turnSpeed * dt;
+      if (input.right)    tank.mesh.rotation.y -= turnSpeed * dt;
+    }
 
     if (input.turretAngle !== null) {
       tank.setTurretAngle(input.turretAngle);
     }
 
-    // Terrain follow + arena clamp
+    // Terrain follow + arena clamp.
+    // Skip terrain-follow while jumping — TankAbilityEffects drives the Y
+    // coordinate along the parabolic arc (t043 rocketJump).
     const pos = tank.mesh.position;
-    pos.y = terrain.getHeightAt(pos.x, pos.z);
+    if (!tank.isJumping) {
+      pos.y = terrain.getHeightAt(pos.x, pos.z);
+    }
     pos.x = THREE.MathUtils.clamp(pos.x, -ARENA_BOUND, ARENA_BOUND);
     pos.z = THREE.MathUtils.clamp(pos.z, -ARENA_BOUND, ARENA_BOUND);
 
-    // E key — voluntary exit
-    if (input.exitVehicle) {
+    // E key — voluntary exit (not permitted during lockdown or jump)
+    if (input.exitVehicle && !locked && !tank.isJumping) {
       this.exitTank();
     }
 

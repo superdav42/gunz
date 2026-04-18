@@ -25,6 +25,7 @@ import { SaveSystem } from '../systems/SaveSystem.js';
 import { LeagueSystem } from '../systems/LeagueSystem.js';
 import { LeagueDisplay } from '../ui/LeagueDisplay.js';
 import { getLeagueDef } from '../data/LeagueDefs.js';
+import { TankAbilityEffects } from '../systems/TankAbilityEffects.js';
 import { getTankDef } from '../data/TankDefs.js';
 import { GunDefs, MeleeDefs } from '../data/WeaponDefs.js';
 import { Projectile } from '../entities/Projectile.js';
@@ -269,6 +270,9 @@ export class Game {
         this.playerController.reset();
         // Reset ability cooldowns so both slots are ready at round start (t042).
         this.abilitySystem.reset();
+        // Cancel active ability effects (shield, jump arc, lockdown) so they
+        // don't carry into the next round. Tank.reset() will clear flags after (t043).
+        this.tankAbilityEffects.reset();
         this._playerDustTimer = 0;
         this._enemyDustTimer = 0;
       })
@@ -339,6 +343,15 @@ export class Game {
     // AbilitySystem: cooldown-based Q-key ability framework (t042/t044).
     // Slots are configured from the player's loadout when a match starts.
     this.abilitySystem = new AbilitySystem();
+
+    // TankAbilityEffects: actual gameplay effects for the six tank abilities (t043).
+    // Receives the ability ID from AbilitySystem.tryActivateTankAbility() and
+    // executes the corresponding effect (damage, shield, jump, lockdown, etc.).
+    this.tankAbilityEffects = new TankAbilityEffects({
+      terrain:          this.terrain,
+      particles:        this.particles,
+      projectileSystem: this.projectiles,
+    });
 
     this.hud = new HUD();
     this.killFeed = new KillFeed();
@@ -457,6 +470,10 @@ export class Game {
       // AbilitySystem: advance cooldown timers (t042).
       this.abilitySystem.update(dt);
 
+      // TankAbilityEffects: advance timed effects (jump arcs, shield/lockdown timers,
+      // barrage queues) and apply AoE on landing (t043).
+      this.tankAbilityEffects.update(dt, this.teams.getAllLivingTanks());
+
       // StatsTracker: advance survival timer only during active round
       this.stats.update(dt);
     }
@@ -563,19 +580,17 @@ export class Game {
       }
     }
 
-    // ---- Ability activation — Q key (t042/t044) ----
-    // Tank mode   → try tank ability slot (effects: t043).
-    // Soldier mode → try weapon ability slot (effects: t044, implemented below).
+    // ---- Ability activation — Q key (t042/t043/t044) ----
+    // Tank mode   → tank ability slot (cooldown managed by AbilitySystem,
+    //               effect executed by TankAbilityEffects — t043).
+    // Soldier mode → weapon ability slot (effects: t044, implemented below).
     if (input.ability) {
       if (this.playerController.mode === 'tank') {
         const activated = this.abilitySystem.tryActivateTankAbility();
         if (activated) {
-          // Placeholder VFX: emit a burst at the tank's position.
-          // t043 will replace this with the real tank ability effect.
-          this.particles.emitExplosion(
-            this.player.mesh.position.clone(),
-            { count: 20, speed: 8, lifetime: 0.8 }
-          );
+          // Execute the real gameplay effect (t043).
+          const allTanks = this.teams.getAllLivingTanks();
+          this.tankAbilityEffects.execute(activated, this.player, allTanks);
         }
       } else if (this.playerController.soldier) {
         const activated = this.abilitySystem.tryActivateWeaponAbility();
@@ -1049,6 +1064,8 @@ export class Game {
       this.stats.reset();
       // Reset PlayerController to tank mode (clears any active soldier mesh)
       this.playerController.reset();
+      // Cancel any active ability effects before tanks reset their flag fields (t043).
+      this.tankAbilityEffects.reset();
       // Reset field entities
       this.teams.reset();
       this.projectiles.reset();
