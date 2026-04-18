@@ -17,6 +17,8 @@ export class InputSystem {
     this._aimTouch = { active: false, id: null, x: 0, y: 0 };
     this._fireRequested = false;
     this._turretAngle = null;
+    /** One-shot: true on the frame E is pressed (exit/enter vehicle). */
+    this._exitVehicleRequested = false;
 
     // Mouse aim
     this._mouseAim = { active: false, x: 0, y: 0 };
@@ -30,6 +32,7 @@ export class InputSystem {
     window.addEventListener('keydown', (e) => {
       this._keys[e.code] = true;
       if (e.code === 'Space') this._fireRequested = true;
+      if (e.code === 'KeyE')  this._exitVehicleRequested = true;
       // Prevent Tab from shifting browser focus while held for the scoreboard
       if (e.code === 'Tab') e.preventDefault();
     });
@@ -145,10 +148,13 @@ export class InputSystem {
       turretAngle: this._turretAngle,
       /** true while Tab is held — shows/hides the scoreboard overlay */
       tabHeld: !!this._keys['Tab'],
+      /** One-shot: true on the frame E was pressed — exit tank or re-enter tank. */
+      exitVehicle: this._exitVehicleRequested,
     };
 
     // Reset one-shot inputs
     this._fireRequested = false;
+    this._exitVehicleRequested = false;
 
     return state;
   }
