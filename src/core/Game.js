@@ -26,6 +26,7 @@ import { EconomySystem } from '../systems/EconomySystem.js';
 import { SaveSystem } from '../systems/SaveSystem.js';
 import { LeagueSystem } from '../systems/LeagueSystem.js';
 import { LeagueDisplay } from '../ui/LeagueDisplay.js';
+import { MainMenu } from '../ui/MainMenu.js';
 import { getLeagueDef } from '../data/LeagueDefs.js';
 import { SoundSystem } from '../systems/SoundSystem.js';
 import { MapLayout } from '../systems/MapLayout.js';
@@ -421,16 +422,66 @@ export class Game {
     // Passes LeagueSystem so the shop can lock items by league and enforce upgrade tier caps.
     this.shopMenu = new ShopMenu(this.save, this.economy, this.league);
     this.shopMenu.onClose(() => {
-      // When the player closes the shop, show the loadout screen for the next match.
-      this.isRunning = false;
+      // When the player closes the shop, return to the main menu.
+      this._showMainMenu();
+    });
+
+    // MainMenu (t055): title screen with Play / Shop / Loadout buttons and
+    // league + money display. Shown on first load and after each match ends.
+    this.mainMenu = new MainMenu();
+    this._syncMainMenu();
+  }
+
+  /**
+   * Show the MainMenu, then proceed to LoadoutScreen when the player hits Play.
+   * Call this on fresh game start.
+   */
+  start() {
+    this._showMainMenu();
+  }
+
+  /**
+   * Show the MainMenu with current league + money, wiring up the three buttons.
+   * Called on first load, after shop closes, and after each match ends (via restart).
+   * @private
+   */
+  _showMainMenu() {
+    this._syncMainMenu();
+    this.mainMenu.show({
+      onPlay:    () => this._showLoadoutThenPlay(),
+      onShop:    () => this._openShopFromMenu(),
+      onLoadout: () => this._showLoadoutThenPlay(),
     });
   }
 
   /**
-   * Show the LoadoutScreen, then begin the game loop once the player deploys.
-   * Call this on fresh game start.
+   * Sync the MainMenu's league badge, LP bar and money from current systems.
+   * @private
    */
-  start() {
+  _syncMainMenu() {
+    this.mainMenu.update(
+      this.league.leagueId,
+      this.league.lp,
+      this.economy.balance
+    );
+  }
+
+  /**
+   * Open the shop from the main menu.  When the shop closes, _showMainMenu()
+   * is called via the shopMenu.onClose() callback registered in _initSystems().
+   * @private
+   */
+  _openShopFromMenu() {
+    this.isRunning = false;
+    this.shopMenu.open();
+  }
+
+  /**
+   * Show the LoadoutScreen; on Deploy apply the loadout and start the match.
+   * Shared by the Play and Loadout buttons on the main menu.
+   * @private
+   */
+  _showLoadoutThenPlay() {
     this.loadoutScreen.show((selection) => {
       this.currentLoadout = selection;
       // Persist the selection so it survives a page reload.
@@ -441,17 +492,17 @@ export class Game {
         `gun:${selection.gun} melee:${selection.melee}`
       );
       // Apply selected tank class stats + per-class upgrades (t037 + t041).
-       // Upgrades are tracked per class so Heavy armor upgrades don't affect Scout.
-       const classUpgrades = this.save.getProfile().upgrades[selection.tank] || {};
-       this.player.applyClassStats(selection.tank, classUpgrades);
-       // Apply on-foot gun and melee selections so soldiers spawn with chosen weapons (t031/t034).
-       this.playerController.soldierGunId   = selection.gun;
-       this.playerController.soldierMeleeId = selection.melee;
-       // Configure AbilitySystem slots from the chosen loadout (t042).
-       this._applyLoadoutToAbilitySystem(selection);
-       // Apply the equipped cosmetic skin to the player tank (t053).
-       this.teams.player.applySkin(this.save.getEquippedSkin());
-       this._startImmediately();
+      // Upgrades are tracked per class so Heavy armor upgrades don't affect Scout.
+      const classUpgrades = this.save.getProfile().upgrades[selection.tank] || {};
+      this.player.applyClassStats(selection.tank, classUpgrades);
+      // Apply on-foot gun and melee selections so soldiers spawn with chosen weapons (t031/t034).
+      this.playerController.soldierGunId   = selection.gun;
+      this.playerController.soldierMeleeId = selection.melee;
+      // Configure AbilitySystem slots from the chosen loadout (t042).
+      this._applyLoadoutToAbilitySystem(selection);
+      // Apply the equipped cosmetic skin to the player tank (t053).
+      this.teams.player.applySkin(this.save.getEquippedSkin());
+      this._startImmediately();
     });
   }
 
@@ -1103,56 +1154,47 @@ export class Game {
   }
 
   /**
-   * Full match restart — shows the LoadoutScreen, then resets and relaunches.
-   * Called by the "Play Again" button in MatchOverlay.
+   * Return to the main menu after a match ends.
+   * Called by the "Play Again" button in MatchOverlay (which previously went
+   * straight to the LoadoutScreen).  The main menu lets the player visit the
+   * Shop or Loadout before committing to another match.
    */
   restart() {
-    // Hide league display overlay before returning to play.
+    // Hide league display overlay before returning to the menu.
     this.leagueDisplay.hide();
-    // Pause the game loop while the loadout screen is shown.
+    // Pause the game loop while the main menu is shown.
     this.isRunning = false;
 
-    this.loadoutScreen.show((selection) => {
-      this.currentLoadout = selection;
-      this.save.setLoadout(selection.tank, selection.gun, selection.melee);
-      this.save.save();
-      console.info(
-        `[Game] Loadout updated — tank:${selection.tank} ` +
-        `gun:${selection.gun} melee:${selection.melee}`
-      );
-      // Re-apply selected tank class stats + per-class upgrades (t037 + t041).
-      const classUpgrades = this.save.getProfile().upgrades[selection.tank] || {};
-      this.player.applyClassStats(selection.tank, classUpgrades);
-      // Apply on-foot gun and melee selections so soldiers spawn with chosen weapons (t031/t034).
-      this.playerController.soldierGunId   = selection.gun;
-      this.playerController.soldierMeleeId = selection.melee;
-      // Reconfigure AbilitySystem for the new loadout (t042).
-      this._applyLoadoutToAbilitySystem(selection);
+    // Perform the between-match field reset now, before the next match begins.
+    // This clears stale entities so they don't briefly appear if the renderer
+    // keeps ticking (it doesn't — isRunning is false — but it's cleaner).
+    this._resetFieldForNextMatch();
 
-      this.score = 0;
-      // Reset match state machine first (no team events should fire during reset)
-      this.match.reset();
-      // Reset StatsTracker for the new match
-      this.stats.reset();
-      // Reset PlayerController to tank mode (clears any active soldier mesh)
-      this.playerController.reset();
-      // Cancel any active ability effects before tanks reset their flag fields (t043).
-      this.tankAbilityEffects.reset();
-      // Reset field entities
-      this.teams.reset();
-      // Re-apply skin after reset (handles skin changes between matches) (t053).
-      this.teams.player.applySkin(this.save.getEquippedSkin());
-      this.projectiles.reset();
-      this.particles.reset();
-      this.trees.reset();
-      this.wrecks.reset();
-      this._playerDustTimer = 0;
-      this._enemyDustTimer = 0;
-      this.hud.hideGameOver();
-      this.killFeed.clear();
+    // Go to main menu; Play/Loadout buttons will show LoadoutScreen then _deployAndPlay().
+    this._showMainMenu();
+  }
 
-      this._startImmediately();
-    });
+  /**
+   * Reset all field state in preparation for a new match.
+   * Extracted from restart() so it can be called from _deployAndPlay() too,
+   * where the actual tank/weapon selection has already been applied.
+   * @private
+   */
+  _resetFieldForNextMatch() {
+    this.score = 0;
+    this.match.reset();
+    this.stats.reset();
+    this.playerController.reset();
+    this.tankAbilityEffects.reset();
+    this.teams.reset();
+    this.projectiles.reset();
+    this.particles.reset();
+    this.trees.reset();
+    this.wrecks.reset();
+    this._playerDustTimer = 0;
+    this._enemyDustTimer = 0;
+    this.hud.hideGameOver();
+    this.killFeed.clear();
   }
 
   /**
