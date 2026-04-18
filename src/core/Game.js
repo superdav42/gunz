@@ -468,22 +468,24 @@ export class Game {
       // Living enemy soldiers will be added here when t028 introduces AI soldiers.
       const meleeTargets = [...this.teams.getEnemyTanks()];
       const hits = activeSoldier.melee(meleeTargets);
-      for (const { target, damage } of hits) {
-        // Record damage in the stats tracker so rewards are counted.
-        this.stats.recordPlayerDamage(target, damage);
-        const hitPos = target.mesh.position.clone();
-        if (target.health <= 0) {
-          this.stats.recordTankKilled(target, true);
-          this.killFeed.addMessage(
-            activeSoldier.name || 'Player',
-            target.name || 'Enemy'
-          );
-          this.teams.killTank(target);
-          this.particles.emitExplosion(hitPos, { count: 25, speed: 8 });
-        } else {
-          // Small impact burst for a non-lethal melee hit.
-          this.particles.emitExplosion(hitPos, { count: 8, speed: 4, lifetime: 0.3 });
-        }
+      this._processMeleeHits(activeSoldier, hits);
+    }
+
+    // ---- Melee weapon ability — Dash Strike (t033) ----
+    // Q key activates the equipped melee weapon's special ability.
+    if (activeSoldier && input.ability && activeSoldier.canActivateMeleeAbility()) {
+      const abilityTargets = [...this.teams.getEnemyTanks()];
+      const abilityHits = activeSoldier.activateMeleeAbility(abilityTargets);
+
+      // Snap the soldier's Y to terrain after the lunge repositions them.
+      const soldierPos = activeSoldier.mesh.position;
+      soldierPos.y = this.terrain.getHeightAt(soldierPos.x, soldierPos.z);
+
+      this._processMeleeHits(activeSoldier, abilityHits);
+
+      // Particle burst along the lunge path to signal the ability fired.
+      if (abilityHits.length === 0) {
+        this.particles.emitExplosion(soldierPos.clone(), { count: 12, speed: 6, lifetime: 0.4 });
       }
     }
 
@@ -492,6 +494,32 @@ export class Game {
     if (this._playerDustTimer <= 0 && isMoving) {
       this._playerDustTimer = 0.15;
       this.particles.emitDust(this.playerController.mesh.position);
+    }
+  }
+
+  /**
+   * Apply a batch of melee hit results: record stats, emit particles, kill tanks.
+   * Shared by the regular melee swing and the Dash Strike ability (t033).
+   *
+   * @param {import('../entities/Soldier.js').Soldier} attacker
+   * @param {Array<{target: object, damage: number}>} hits
+   * @private
+   */
+  _processMeleeHits(attacker, hits) {
+    for (const { target, damage } of hits) {
+      this.stats.recordPlayerDamage(target, damage);
+      const hitPos = target.mesh.position.clone();
+      if (target.health <= 0) {
+        this.stats.recordTankKilled(target, true);
+        this.killFeed.addMessage(
+          attacker.name || 'Player',
+          target.name || 'Enemy'
+        );
+        this.teams.killTank(target);
+        this.particles.emitExplosion(hitPos, { count: 25, speed: 8 });
+      } else {
+        this.particles.emitExplosion(hitPos, { count: 8, speed: 4, lifetime: 0.3 });
+      }
     }
   }
 
