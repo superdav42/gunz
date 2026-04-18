@@ -183,6 +183,8 @@ export class Game {
         this.projectiles.reset();
         this.particles.reset();
         this.wrecks.reset();
+        // Respawn the destructible tree set so the field is full again next round.
+        this.trees.reset();
         this._playerDustTimer = 0;
         this._enemyDustTimer = 0;
       })
@@ -350,13 +352,17 @@ export class Game {
 
   /**
    * Called by CollisionSystem when the player's tank HP reaches 0.
-   * The tank is already marked dead in TeamManager (via enemies.remove adapter),
-   * which may trigger onTeamEliminated → MatchManager handles round/match end.
+   * Marks the player's slot dead in TeamManager so `isTeamEliminated(0)` can
+   * fire, removing the mesh from the scene and triggering the MatchManager
+   * round-end / match-end flow if all allies are also gone.
    */
   _onPlayerTankDestroyed() {
     // Notify StatsTracker to stop the survival timer for this round.
     this.stats.recordPlayerDeath();
-    // MatchOverlay handles ROUND_END / MATCH_END display.
+    // Mark player dead in TeamManager: removes mesh, checks team elimination.
+    // Without this call the player's slot stays alive=true and the team can
+    // never be eliminated, stalling the round indefinitely.
+    this.teams.killTank(this.player);
     console.info('[Game] Player tank destroyed.');
   }
 

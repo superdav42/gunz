@@ -210,6 +210,10 @@ export class CollisionSystem {
     for (let i = projectiles.length - 1; i >= 0; i--) {
       const p = projectiles[i];
       if (p.isPlayerOwned) continue;
+      // Skip if the player is already dead (health=0 after killTank was called).
+      // Without this guard, projectiles in-flight when the player dies would
+      // re-trigger _onPlayerDeath on every subsequent frame they collide.
+      if (player.health <= 0) continue;
 
       const dist = p.mesh.position.distanceTo(player.mesh.position);
       if (dist < 2.5) {
