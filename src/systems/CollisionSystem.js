@@ -35,20 +35,23 @@
  *    victim: display name of the destroyed tank
  *  onExplosion(position, splashRadius)   — called when an explosive projectile detonates
  *  onBuildingWallDestroyed(position)     — called when a building wall is knocked down
+ *  onBridgeSectionDestroyed(position)   — called when a bridge plank is blown out (t049)
+ *  onWallDestroyed(position)            — called when a low wall is destroyed (t049)
  */
 export class CollisionSystem {
   /**
    * @param {object} opts
-   * @param {import('../entities/Terrain.js').Terrain}         opts.terrain
-   * @param {import('../entities/Tank.js').Tank}               opts.player
-   * @param {import('./EnemySystem.js').EnemySystem}           opts.enemies
-   * @param {import('./ProjectileSystem.js').ProjectileSystem} opts.projectiles
-   * @param {import('./TreeSystem.js').TreeSystem}             [opts.treeSystem]
-   * @param {import('./WreckSystem.js').WreckSystem}           [opts.wrecks]
-   * @param {import('./MapLayout.js').MapLayout}                [opts.mapLayout]
-   * @param {import('../entities/Village.js').VillageGenerator} [opts.villageSystem]
+   * @param {import('../entities/Terrain.js').Terrain}           opts.terrain
+   * @param {import('../entities/Tank.js').Tank}                 opts.player
+   * @param {import('./EnemySystem.js').EnemySystem}             opts.enemies
+   * @param {import('./ProjectileSystem.js').ProjectileSystem}   opts.projectiles
+   * @param {import('./TreeSystem.js').TreeSystem}               [opts.treeSystem]
+   * @param {import('./WreckSystem.js').WreckSystem}             [opts.wrecks]
+   * @param {import('./MapLayout.js').MapLayout}                 [opts.mapLayout]
+   * @param {import('../entities/Village.js').VillageGenerator}  [opts.villageSystem]
+   * @param {import('./StructureSystem.js').StructureSystem}     [opts.structureSystem]
    */
-  constructor({ terrain, player, enemies, projectiles, treeSystem = null, wrecks = null, mapLayout = null, villageSystem = null }) {
+  constructor({ terrain, player, enemies, projectiles, treeSystem = null, wrecks = null, mapLayout = null, villageSystem = null, structureSystem = null }) {
     this.terrain = terrain;
     this.player = player;
     this.enemies = enemies;
@@ -57,6 +60,7 @@ export class CollisionSystem {
     this.wrecks = wrecks;
     this.mapLayout = mapLayout;
     this.villageSystem = villageSystem;
+    this.structureSystem = structureSystem;
 
     this._onScoreAdd = null;
     this._onPlayerDeath = null;
@@ -69,6 +73,8 @@ export class CollisionSystem {
     this._onKillFeed = null;
     this._onExplosion = null;
     this._onBuildingWallDestroyed = null;
+    this._onBridgeSectionDestroyed = null;
+    this._onWallDestroyed = null;
 
     /**
      * Approximate half-width of a tank hull for obstacle push-back.
@@ -181,6 +187,24 @@ export class CollisionSystem {
     return this;
   }
 
+  /**
+   * Called whenever a bridge plank is blown out (t049).
+   * @param {(position: import('three').Vector3) => void} cb
+   */
+  onBridgeSectionDestroyed(cb) {
+    this._onBridgeSectionDestroyed = cb;
+    return this;
+  }
+
+  /**
+   * Called whenever a low wall is destroyed by a projectile (t049).
+   * @param {(position: import('three').Vector3) => void} cb
+   */
+  onWallDestroyed(cb) {
+    this._onWallDestroyed = cb;
+    return this;
+  }
+
   // ---------------------------------------------------------------------------
   // Per-frame entry point
   // ---------------------------------------------------------------------------
@@ -190,6 +214,10 @@ export class CollisionSystem {
     this._checkTankObstacleCollisions();
     if (this.villageSystem) {
       this._checkProjectileBuildingCollisions();
+    }
+    if (this.structureSystem) {
+      this._checkProjectileBridgeCollisions();
+      this._checkProjectileWallCollisions();
     }
   }
 
@@ -672,6 +700,98 @@ export class CollisionSystem {
         }
 
         break; // projectile consumed; skip remaining buildings
+      }
+    }
+  }
+
+  /**
+   * Check all active projectiles against all bridge sections (t049).
+   *
+   * Uses a two-phase check:
+   *  1. Bounding-width X check against the bridge's half-width.
+   *  2. AABB containment via bridge.containsPointXZ().
+   *
+   * On confirmed hit: calls bridge.hitByProjectile() which handles per-plank
+   * HP deduction and mesh removal.  Fires `_onBridgeSectionDestroyed` on
+   * plank destruction and `_onHit` for non-lethal impacts.
+   */
+  _checkProjectileBridgeCollisions() {
+    const projectiles = this.projectiles.active;
+    const bridges     = this.structureSystem.bridges;
+
+    for (let i = projectiles.length - 1; i >= 0; i--) {
+      const p  = projectiles[i];
+      const px = p.mesh.position.x;
+      const pz = p.mesh.position.z;
+
+      for (const bridge of bridges) {
+        // Fast containment check before calling hitByProjectile
+        if (!bridge.containsPointXZ(px, pz)) { continue; }
+
+        const hitPos = p.mesh.position.clone();
+        const result = bridge.hitByProjectile(hitPos, p.damage);
+
+        if (!result.hit) { continue; }
+
+        this.projectiles.remove(i);
+
+        // Explosive detonation: splash damage + explosion visual.
+        if (p.splashRadius > 0) {
+          this._applySplashToEnemies(p, hitPos, null);
+          this._applySplashToPlayer(p, hitPos, null);
+          if (this._onExplosion) { this._onExplosion(hitPos, p.splashRadius); }
+        }
+
+        if (result.sectionDestroyed) {
+          if (this._onBridgeSectionDestroyed) { this._onBridgeSectionDestroyed(hitPos); }
+        } else if (!p.splashRadius) {
+          if (this._onHit) { this._onHit(hitPos, 'bridge'); }
+        }
+
+        break; // projectile consumed; skip remaining bridges
+      }
+    }
+  }
+
+  /**
+   * Check all active projectiles against all alive low walls (t049).
+   *
+   * Uses AABB containment via wall.containsPointXZ().
+   * On confirmed hit: calls wall.takeDamage(); fires `_onWallDestroyed` when
+   * the wall is knocked out or `_onHit` for non-lethal impacts.
+   */
+  _checkProjectileWallCollisions() {
+    const projectiles = this.projectiles.active;
+    const walls       = this.structureSystem.walls;
+
+    for (let i = projectiles.length - 1; i >= 0; i--) {
+      const p  = projectiles[i];
+      const px = p.mesh.position.x;
+      const pz = p.mesh.position.z;
+
+      for (const wall of walls) {
+        if (!wall.alive) { continue; }
+        if (!wall.containsPointXZ(px, pz)) { continue; }
+
+        // Hit confirmed
+        const hitPos   = p.mesh.position.clone();
+        const destroyed = wall.takeDamage(p.damage);
+        this.projectiles.remove(i);
+
+        // Explosives detonate and deal splash regardless of wall fate.
+        if (p.splashRadius > 0) {
+          this._applySplashToEnemies(p, hitPos, null);
+          this._applySplashToPlayer(p, hitPos, null);
+          if (this._onExplosion) { this._onExplosion(hitPos, p.splashRadius); }
+        }
+
+        if (destroyed) {
+          if (this._onWallDestroyed) { this._onWallDestroyed(hitPos); }
+        } else if (!p.splashRadius) {
+          if (this._onHit) { this._onHit(hitPos, 'wall'); }
+        }
+
+        break; // projectile consumed; skip remaining walls
       }
     }
   }

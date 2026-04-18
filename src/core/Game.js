@@ -32,6 +32,7 @@ import { SoundSystem } from '../systems/SoundSystem.js';
 import { MapLayout } from '../systems/MapLayout.js';
 import { TankAbilityEffects } from '../systems/TankAbilityEffects.js';
 import { FlameSystem } from '../systems/FlameSystem.js';
+import { StructureSystem } from '../systems/StructureSystem.js';
 import { getTankDef } from '../data/TankDefs.js';
 import { GunDefs, MeleeDefs } from '../data/WeaponDefs.js';
 import { Projectile } from '../entities/Projectile.js';
@@ -155,6 +156,17 @@ export class Game {
     // map layout stays the same; only dynamic wrecks and projectiles are cleared).
     this.village = new VillageGenerator(this.scene, this.terrain);
 
+    // StructureSystem — destructible bridges over river zones and low walls /
+    // fences that tanks drive through (t049).  Like VillageGenerator, structures
+    // persist across rounds; only their HP state changes.
+    // Created after MapLayout so river zone data is ready, and after terrain so
+    // bridge planks sample the correct ground height.
+    this.structures = new StructureSystem(this.scene, this.terrain);
+
+    // Wire bridge data into MapLayout so isInRiver() skips the speed penalty
+    // when an entity is standing on a live bridge plank (t049).
+    this.mapLayout.setStructureSystem(this.structures);
+
     // Dust-emission timers
     this._playerDustTimer = 0;
     this._enemyDustTimer = 0;
@@ -187,6 +199,7 @@ export class Game {
       wrecks: this.wrecks,
       mapLayout: this.mapLayout,
       villageSystem: this.village,
+      structureSystem: this.structures,
     });
 
     this.collision
@@ -242,6 +255,15 @@ export class Game {
       .onBuildingWallDestroyed((pos) => {
         // Medium debris burst when a wall panel is knocked down (t047/t048).
         this.particles.emitExplosion(pos, { count: 20, speed: 7, lifetime: 0.8 });
+      })
+      .onBridgeSectionDestroyed((pos) => {
+        // Plank-splinter burst when a bridge section is blown out (t049).
+        this.particles.emitExplosion(pos, { count: 18, speed: 6, lifetime: 0.9 });
+        this.sound.playExplosion();
+      })
+      .onWallDestroyed((pos) => {
+        // Small debris burst when a low wall is destroyed (t049).
+        this.particles.emitExplosion(pos, { count: 10, speed: 5, lifetime: 0.6 });
       });
 
     // SaveSystem: load persisted player profile from localStorage (t015).
@@ -573,6 +595,12 @@ export class Game {
       // Update each alive tank's fire cooldown
       for (const tank of this.teams.getAllLivingTanks()) {
         tank.update(dt);
+      }
+
+      // Tank wall-smash detection (t049): tanks drive through low walls.
+      // Any tank whose centre overlaps a wall's footprint destroys it instantly.
+      for (const tank of this.teams.getAllLivingTanks()) {
+        this.structures.checkTankWallSmash(tank.mesh);
       }
 
       // Collision and projectile systems
