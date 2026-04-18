@@ -45,15 +45,17 @@ export class CollisionSystem {
    * @param {import('./ProjectileSystem.js').ProjectileSystem} opts.projectiles
    * @param {import('./TreeSystem.js').TreeSystem}             [opts.treeSystem]
    * @param {import('./WreckSystem.js').WreckSystem}           [opts.wrecks]
+   * @param {import('./MapLayout.js').MapLayout}                [opts.mapLayout]
    * @param {import('../entities/Village.js').VillageGenerator} [opts.villageSystem]
    */
-  constructor({ terrain, player, enemies, projectiles, treeSystem = null, wrecks = null, villageSystem = null }) {
+  constructor({ terrain, player, enemies, projectiles, treeSystem = null, wrecks = null, mapLayout = null, villageSystem = null }) {
     this.terrain = terrain;
     this.player = player;
     this.enemies = enemies;
     this.projectiles = projectiles;
     this.treeSystem = treeSystem;
     this.wrecks = wrecks;
+    this.mapLayout = mapLayout;
     this.villageSystem = villageSystem;
 
     this._onScoreAdd = null;
@@ -541,7 +543,7 @@ export class CollisionSystem {
       }
     }
 
-    // Buildings block tanks until all their walls are destroyed (t047/t048)
+    // Buildings block tanks until all their walls are destroyed (t047/t048/t052)
     if (this.villageSystem) {
       const buildingObs = this.villageSystem.activeObstacles;
       if (buildingObs.length > 0) {
