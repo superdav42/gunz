@@ -478,6 +478,122 @@ export class CollisionSystem {
   }
 
   /**
+   * Apply continuous cone damage from a Flame Tank per fire tick (t039).
+   *
+   * Called by Game.js once per canFire() tick (~10 Hz) for:
+   *   - The player's tank when it is a Flame Tank and the fire button is held.
+   *   - Any AI tank (ally or enemy) that is a Flame Tank and in range.
+   *
+   * Geometry: targets within `flameTank.range` units of the nozzle AND within a
+   * ±30° half-angle cone centered on the nozzle forward direction take damage.
+   * Damage falls off linearly to 0 at the cone edge.
+   *
+   * Kill callbacks mirror the projectile kill chain so the kill feed, wrecks,
+   * score, and TeamManager state all stay consistent.
+   *
+   * @param {import('../entities/Tank.js').Tank} flameTank — the attacking tank
+   * @param {import('three').Vector3}            muzzlePos — world-space nozzle tip
+   * @param {import('three').Vector3}            direction  — normalised fire direction
+   */
+  applyFlameDamage(flameTank, muzzlePos, direction) {
+    const range          = flameTank.range;                 // 20 u for Flame Tank
+    const CONE_HALF      = Math.PI / 6;                     // 30° → 60° total arc
+    const cosThreshold   = Math.cos(CONE_HALF);             // ≈ 0.866
+    const isPlayerSide   = flameTank.teamId === 0;
+
+    const _toTarget = { x: 0, y: 0, z: 0 }; // scratch vector (avoids per-frame alloc)
+
+    if (isPlayerSide) {
+      // ── Flame Tank on player team (player + allies) — damages enemies ────────
+      const enemies  = this.enemies.active;
+      const toKill   = [];
+
+      for (const enemy of enemies) {
+        if (enemy.health <= 0) continue;
+
+        _toTarget.x = enemy.mesh.position.x - muzzlePos.x;
+        _toTarget.y = enemy.mesh.position.y - muzzlePos.y;
+        _toTarget.z = enemy.mesh.position.z - muzzlePos.z;
+
+        const dist = Math.sqrt(
+          _toTarget.x * _toTarget.x +
+          _toTarget.y * _toTarget.y +
+          _toTarget.z * _toTarget.z
+        );
+        if (dist > range || dist < 0.001) continue;
+
+        // Dot product of normalised to-target vs fire direction
+        const dot = (_toTarget.x / dist) * direction.x +
+                    (_toTarget.y / dist) * direction.y +
+                    (_toTarget.z / dist) * direction.z;
+        if (dot < cosThreshold) continue; // outside cone
+
+        const falloff    = 1 - dist / range;
+        const rawDmg     = flameTank.damage * flameTank.damageMultiplier * falloff;
+        const actualDmg  = enemy.takeDamage(rawDmg);
+
+        flameTank.recordDamage(actualDmg);
+        if (this._onDamageDealt) this._onDamageDealt(enemy, actualDmg);
+
+        if (enemy.health <= 0) toKill.push(enemy);
+      }
+
+      for (const killed of toKill) {
+        flameTank.recordKill();
+        const tankData = {
+          position:  killed.mesh.position.clone(),
+          rotationY: killed.mesh.rotation.y,
+        };
+        const killerName = flameTank.name || (flameTank === this.player ? 'Player' : 'Ally');
+        if (this._onKillFeed) this._onKillFeed(killerName, killed.name || 'Enemy');
+        if (this._onTankKilled) this._onTankKilled(killed, flameTank === this.player);
+        const idx = this.enemies.active.indexOf(killed);
+        if (idx !== -1) this.enemies.remove(idx);
+        if (this._onKill) this._onKill(muzzlePos.clone(), 'player', tankData);
+        if (this._onScoreAdd) this._onScoreAdd(100);
+      }
+
+    } else {
+      // ── Enemy Flame Tank — damages the player ────────────────────────────────
+      const player = this.player;
+      if (player.health <= 0) return;
+
+      _toTarget.x = player.mesh.position.x - muzzlePos.x;
+      _toTarget.y = player.mesh.position.y - muzzlePos.y;
+      _toTarget.z = player.mesh.position.z - muzzlePos.z;
+
+      const dist = Math.sqrt(
+        _toTarget.x * _toTarget.x +
+        _toTarget.y * _toTarget.y +
+        _toTarget.z * _toTarget.z
+      );
+      if (dist > range || dist < 0.001) return;
+
+      const dot = (_toTarget.x / dist) * direction.x +
+                  (_toTarget.y / dist) * direction.y +
+                  (_toTarget.z / dist) * direction.z;
+      if (dot < cosThreshold) return;
+
+      const falloff   = 1 - dist / range;
+      const rawDmg    = flameTank.damage * flameTank.damageMultiplier * falloff;
+      const actualDmg = player.takeDamage(rawDmg);
+
+      if (flameTank.recordDamage) flameTank.recordDamage(actualDmg);
+
+      if (player.health <= 0) {
+        if (flameTank.recordKill) flameTank.recordKill();
+        const tankData = {
+          position:  player.mesh.position.clone(),
+          rotationY: player.mesh.rotation.y,
+        };
+        if (this._onKillFeed) this._onKillFeed(flameTank.name || 'Enemy', player.name || 'Player');
+        if (this._onKill) this._onKill(muzzlePos.clone(), 'enemy', tankData);
+        if (this._onPlayerDeath) this._onPlayerDeath();
+      }
+    }
+  }
+
+  /**
    * After all movement, push tanks out of rocks (permanent), alive trees
    * (removed once destroyed), and wrecks (permanent until round reset).
    * Operates in the XZ plane only.

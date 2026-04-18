@@ -276,9 +276,11 @@ export class PlayerController {
    * @param {object} input — snapshot from InputSystem.getState()
    * @param {number} dt    — seconds since last frame
    * @returns {{ newProjectiles: import('../entities/Projectile.js').Projectile[],
-   *             isMoving: boolean }}
+   *             isMoving: boolean,
+   *             flameFired: boolean }}
    *   newProjectiles — projectiles to add to ProjectileSystem (empty array if none fired).
    *   isMoving       — true if the active entity moved this frame (for dust trails).
+   *   flameFired     — true when a Flame Tank successfully fired this tick (no projectile).
    */
   update(input, dt) {
     if (this.mode === 'tank') {
@@ -324,12 +326,19 @@ export class PlayerController {
     }
 
     const newProjectiles = [];
+    let flameFired = false;
+
     if (input.fire && tank.canFire()) {
       const proj = tank.fire();
-      if (proj) newProjectiles.push(proj);
+      if (proj) {
+        newProjectiles.push(proj);
+      } else if (tank.isFlameTank) {
+        // fire() set fireCooldown but returned null — flame tick confirmed.
+        flameFired = true;
+      }
     }
 
-    return { newProjectiles, isMoving: moving };
+    return { newProjectiles, isMoving: moving, flameFired };
   }
 
   // ---------------------------------------------------------------------------

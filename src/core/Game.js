@@ -333,6 +333,15 @@ export class Game {
     // round resets because Tank.reset() restores health to the (already-scaled) maxHealth.
     this.aiController.applyLeagueScalingToTeam(1, 0);
 
+    // Flame Tank (t039): when any AI Flame Tank fires, apply cone damage via
+    // CollisionSystem and emit fire particles.  Game.js owns both systems so
+    // the callback closes over them safely.
+    this.aiController.setFlameAttackCallback((tank, _target) => {
+      const { pos, dir } = tank.getFlameMuzzle();
+      this.collision.applyFlameDamage(tank, pos, dir);
+      this.particles.emitFlame(pos, dir);
+    });
+
     // AbilitySystem: cooldown-based Q-key ability framework (t042).
     // Slots are configured from the player's loadout when a match starts.
     this.abilitySystem = new AbilitySystem();
@@ -490,7 +499,7 @@ export class Game {
    * @param {number} dt
    */
   _updatePlayer(input, dt) {
-    const { newProjectiles, isMoving } = this.playerController.update(input, dt);
+    const { newProjectiles, isMoving, flameFired } = this.playerController.update(input, dt);
 
     // Emit muzzle flash once per shot (using the first projectile for position/direction).
     // Shotgun fires 8 pellets simultaneously — a single flash for the burst is correct.
@@ -503,6 +512,15 @@ export class Game {
       for (const proj of newProjectiles) {
         this.projectiles.add(proj);
       }
+    }
+
+    // ---- Flame Tank (t039): player cone damage + fire particles ----
+    // flameFired is set by PlayerController when the Flame Tank's fire() tick
+    // consumed the cooldown (tank.canFire() was true, isFlameTank is true).
+    if (flameFired) {
+      const { pos, dir } = this.player.getFlameMuzzle();
+      this.collision.applyFlameDamage(this.player, pos, dir);
+      this.particles.emitFlame(pos, dir);
     }
 
     // ---- On-foot soldier melee (t026/t034) ----

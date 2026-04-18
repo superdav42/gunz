@@ -174,11 +174,32 @@ export class AIController {
 
     // Apply initial league. Falls back to bronze if leagueDef is missing/null.
     this._applyLeagueDef(leagueDef || getLeagueDef('bronze'));
+
+    /**
+     * Called when an AI Flame Tank successfully fires (canFire() was true, no
+     * projectile created).  Game.js uses this to apply cone damage and emit
+     * fire particles for both ally and enemy flame tanks.
+     *
+     * Signature: (tank: Tank, target: Tank) => void
+     * @type {((tank: import('../entities/Tank.js').Tank, target: import('../entities/Tank.js').Tank) => void)|null}
+     */
+    this._onFlameAttack = null;
   }
 
   // -------------------------------------------------------------------------
   // Public API — Tank AI
   // -------------------------------------------------------------------------
+
+  /**
+   * Register a callback for when an AI Flame Tank fires.
+   * Called by Game.js to hook in cone damage + particle emission.
+   *
+   * @param {(tank: import('../entities/Tank.js').Tank,
+   *           target: import('../entities/Tank.js').Tank) => void} cb
+   */
+  setFlameAttackCallback(cb) {
+    this._onFlameAttack = cb;
+  }
 
   /**
    * Switch the AI to a different league difficulty level.
@@ -545,6 +566,10 @@ export class AIController {
           projectile.mesh.position.clone(),
           flashDir
         );
+      } else if (tank.isFlameTank && this._onFlameAttack) {
+        // Flame Tank: fire() returned null (cooldown set, no projectile).
+        // Delegate cone damage and particle emission to Game.js via callback.
+        this._onFlameAttack(tank, target);
       }
     }
   }

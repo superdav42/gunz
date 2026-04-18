@@ -374,6 +374,25 @@ export class Tank {
   // Combat
   // ---------------------------------------------------------------------------
 
+  /** True when this tank uses the flamethrower weapon instead of a cannon. */
+  get isFlameTank() {
+    return this.tankClassId === 'flameTank';
+  }
+
+  /**
+   * World-space muzzle position and forward direction for the flame nozzle.
+   * Used by Game.js to position the fire cone and emit particles.
+   *
+   * @returns {{ pos: THREE.Vector3, dir: THREE.Vector3 }}
+   */
+  getFlameMuzzle() {
+    const pos = new THREE.Vector3();
+    const dir = new THREE.Vector3(0, 0, -1);
+    this.muzzle.getWorldPosition(pos);
+    this.muzzle.getWorldDirection(dir);
+    return { pos, dir };
+  }
+
   setTurretAngle(angle) {
     if (this.turret) {
       this.turret.rotation.y = angle - this.mesh.rotation.y;
@@ -389,6 +408,9 @@ export class Tank {
 
     this.fireCooldown = this.fireRate;
     if (this.isPlayer) this.ammo--;
+
+    // Flame Tank uses continuous cone damage applied by CollisionSystem — no projectile.
+    if (this.isFlameTank) return null;
 
     // Get world position and direction of muzzle
     const worldPos = new THREE.Vector3();

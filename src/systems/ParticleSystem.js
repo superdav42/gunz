@@ -298,6 +298,78 @@ export class ParticleSystem {
     }
   }
 
+  /**
+   * Emit a burst of fire particles for the Flame Tank weapon (t039).
+   *
+   * Particles travel forward within a ~30° half-angle cone from the nozzle.
+   * Called at ~10 Hz (once per fire tick) so the particle density is
+   * calibrated for that rate — not every frame.
+   *
+   * @param {THREE.Vector3} position  World-space nozzle tip.
+   * @param {THREE.Vector3} direction Normalised forward direction of the nozzle.
+   */
+  emitFlame(position, direction) {
+    const count = 10;
+    // Perpendicular axes for cone spread (arbitrary; works for any direction).
+    const up = Math.abs(direction.y) < 0.9
+      ? new THREE.Vector3(0, 1, 0)
+      : new THREE.Vector3(1, 0, 0);
+    const right = new THREE.Vector3().crossVectors(direction, up).normalize();
+    const realUp  = new THREE.Vector3().crossVectors(right, direction).normalize();
+
+    for (let i = 0; i < count; i++) {
+      const p = this._acquire();
+      if (!p) return;
+
+      // Random angle within 30° half-angle cone
+      const spreadAngle = (Math.random() * Math.PI) / 6; // 0–30°
+      const rollAngle   = Math.random() * Math.PI * 2;
+      const sinSpread   = Math.sin(spreadAngle);
+      const cosSpread   = Math.cos(spreadAngle);
+
+      const speed = 14 + Math.random() * 10; // fast, flame-like
+      p.velocity.set(
+        (direction.x * cosSpread
+          + (right.x * Math.cos(rollAngle) + realUp.x * Math.sin(rollAngle)) * sinSpread) * speed,
+        (direction.y * cosSpread
+          + (right.y * Math.cos(rollAngle) + realUp.y * Math.sin(rollAngle)) * sinSpread) * speed,
+        (direction.z * cosSpread
+          + (right.z * Math.cos(rollAngle) + realUp.z * Math.sin(rollAngle)) * sinSpread) * speed,
+      );
+
+      // Spawn slightly ahead of nozzle so particles don't clip the barrel
+      p.position.set(
+        position.x + direction.x * 0.4,
+        position.y + direction.y * 0.4,
+        position.z + direction.z * 0.4,
+      );
+
+      p.life    = 0.25 + Math.random() * 0.20; // short — flame dissipates fast
+      p.maxLife = p.life;
+      p.gravity = 1.5; // slight upward curl cancels with velocity Y; net = gentle rise
+
+      // Colour palette: bright yellow core → orange → dark red smoke
+      const r = Math.random();
+      if (r < 0.30) {
+        p.colorStart.setHex(0xffee00); // yellow-white core
+        p.colorEnd.setHex(0xff4400);
+      } else if (r < 0.70) {
+        p.colorStart.setHex(0xff8800); // orange mid
+        p.colorEnd.setHex(0x881100);
+      } else {
+        p.colorStart.setHex(0xff3300); // deep red outer
+        p.colorEnd.setHex(0x330000);
+      }
+
+      p.startScale = 0.20 + Math.random() * 0.20;
+
+      p.mesh.material.color.copy(p.colorStart);
+      p.mesh.material.opacity = 0.85 + Math.random() * 0.15;
+      p.mesh.scale.setScalar(p.startScale);
+      p.mesh.position.copy(p.position);
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Per-frame update
   // -------------------------------------------------------------------------
