@@ -192,6 +192,12 @@ export class Game {
       })
       .onKillFeed((killer, victim) => {
         this.killFeed.addMessage(killer, victim);
+      })
+      .onExplosion((pos, splashRadius) => {
+        // Explosive weapons produce a larger, multi-burst particle effect. (t032)
+        // Particle count scales with splash radius so bigger weapons feel bigger.
+        const count = Math.round(25 + splashRadius * 3);
+        this.particles.emitExplosion(pos, { count, speed: 10, lifetime: 1.0 });
       });
 
     // SaveSystem: load persisted player profile from localStorage (t015).

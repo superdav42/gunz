@@ -186,9 +186,13 @@ export class CollisionSystem {
           if (this._onDamageDealt) this._onDamageDealt(e, actualDamage);
           e.takeDamage(p.damage);
           this.projectiles.remove(i);
+
           if (e.health <= 0) {
+            // Process direct-hit kill BEFORE splash (t032):
+            // Ensures enemies.remove(j) uses the correct index before any
+            // splash removal could shift the active list.
             if (p.ownerTank) p.ownerTank.recordKill();
-            // Snapshot position+rotation before remove() clears the mesh from scene
+            // Snapshot position+rotation before remove() clears the mesh from scene.
             const tankData = {
               position: e.mesh.position.clone(),
               rotationY: e.mesh.rotation.y,
@@ -198,8 +202,19 @@ export class CollisionSystem {
             this.enemies.remove(j);
             if (this._onKill) this._onKill(hitPos, 'player', tankData);
             if (this._onScoreAdd) this._onScoreAdd(100);
+            // Splash AFTER direct-hit kill: e is already removed → pass null exclude. (t032)
+            if (p.splashRadius > 0) {
+              this._applySplashToEnemies(p, hitPos, null);
+              if (this._onExplosion) this._onExplosion(hitPos, p.splashRadius);
+            }
           } else {
-            if (this._onHit) this._onHit(hitPos, 'player');
+            // Non-lethal hit: apply splash to nearby enemies then pick particle. (t032)
+            if (p.splashRadius > 0) {
+              this._applySplashToEnemies(p, hitPos, e); // exclude e (already hit)
+              if (this._onExplosion) this._onExplosion(hitPos, p.splashRadius);
+            } else {
+              if (this._onHit) this._onHit(hitPos, 'player');
+            }
           }
           break; // projectile consumed
         }
@@ -223,6 +238,12 @@ export class CollisionSystem {
         if (p.ownerTank) p.ownerTank.recordDamage(actualDamage);
         player.takeDamage(p.damage);
         this.projectiles.remove(i);
+
+        // Fire onExplosion for visual effect regardless of kill. (t032)
+        if (p.splashRadius > 0) {
+          if (this._onExplosion) this._onExplosion(hitPos, p.splashRadius);
+        }
+
         if (player.health <= 0) {
           if (p.ownerTank) p.ownerTank.recordKill();
           const tankData = {
@@ -233,7 +254,8 @@ export class CollisionSystem {
           if (this._onKill) this._onKill(hitPos, 'enemy', tankData);
           if (this._onPlayerDeath) this._onPlayerDeath();
         } else {
-          if (this._onHit) this._onHit(hitPos, 'enemy');
+          // Only emit regular hit effect if NOT explosive. (t032)
+          if (!p.isExplosive && this._onHit) this._onHit(hitPos, 'enemy');
         }
       }
     }
@@ -251,7 +273,14 @@ export class CollisionSystem {
           if (distSq < hitRadius * hitRadius) {
             const hitPos = p.mesh.position.clone();
             this.projectiles.remove(i);
-            if (this._onHit) this._onHit(hitPos, 'wreck');
+            // Explosives detonating on wrecks still trigger splash. (t032)
+            if (p.splashRadius > 0) {
+              this._applySplashToEnemies(p, hitPos, null);
+              this._applySplashToPlayer(p, hitPos, null);
+              if (this._onExplosion) this._onExplosion(hitPos, p.splashRadius);
+            } else {
+              if (this._onHit) this._onHit(hitPos, 'wreck');
+            }
             break; // projectile consumed
           }
         }
@@ -262,6 +291,9 @@ export class CollisionSystem {
     if (this.treeSystem) {
       this._checkProjectileTreeCollisions();
     }
+
+    // Explosive projectiles that reach terrain level explode on impact. (t032)
+    this._checkExplosiveTerrain();
   }
 
   /**
