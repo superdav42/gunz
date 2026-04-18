@@ -28,6 +28,8 @@ import { LeagueSystem } from '../systems/LeagueSystem.js';
 import { LeagueDisplay } from '../ui/LeagueDisplay.js';
 import { getLeagueDef } from '../data/LeagueDefs.js';
 import { MapLayout } from '../systems/MapLayout.js';
+import { SoundSystem } from '../systems/SoundSystem.js';
+import { MusicSystem } from '../systems/MusicSystem.js';
 import { TankAbilityEffects } from '../systems/TankAbilityEffects.js';
 import { getTankDef } from '../data/TankDefs.js';
 import { GunDefs, MeleeDefs } from '../data/WeaponDefs.js';
@@ -124,6 +126,14 @@ export class Game {
   }
 
   _initSystems() {
+    // SoundSystem (t056): Howler.js SFX — create first so other systems can
+    // fire sound events during their own initialisation.
+    this.sound = new SoundSystem();
+    this.sound.bindUIClicks();
+
+    // MusicSystem (t057): procedurally-synthesised music tracks.
+    this.music = new MusicSystem();
+
     this.input = new InputSystem(this.canvas);
     // CameraController uses target.mesh; PlayerController exposes that getter
     // so the camera follows whichever entity the player is currently controlling.
@@ -147,6 +157,9 @@ export class Game {
     // Dust-emission timers
     this._playerDustTimer = 0;
     this._enemyDustTimer = 0;
+
+    /** Track whether the player was moving last frame to detect start/stop. */
+    this._playerWasMoving = false;
 
     /**
      * CollisionSystem compatibility adapter.
@@ -180,9 +193,13 @@ export class Game {
       .onPlayerDeath(() => this._onPlayerTankDestroyed())
       .onHit((pos) => {
         this.particles.emitExplosion(pos, { count: 15, speed: 6, lifetime: 0.6 });
+        // Play impact sound for non-lethal shell hits (t056).
+        this.sound.playImpact();
       })
       .onKill((pos, owner, tankData) => {
         this.particles.emitExplosion(pos, { count: 35, speed: 10 });
+        // Play explosion sound whenever any tank is destroyed (t056).
+        this.sound.playExplosion();
         // Leave a wreck at the tank's last position as indestructible cover
         if (tankData) {
           this.wrecks.add(tankData.position, tankData.rotationY);
@@ -218,6 +235,8 @@ export class Game {
         // Particle count scales with splash radius so bigger weapons feel bigger.
         const count = Math.round(25 + splashRadius * 3);
         this.particles.emitExplosion(pos, { count, speed: 10, lifetime: 1.0 });
+        // Explosive rounds also play the explosion sound (t056).
+        this.sound.playExplosion();
       })
       .onBuildingWallDestroyed((pos) => {
         // Medium debris burst when a wall panel is knocked down (t047/t048).
@@ -297,6 +316,12 @@ export class Game {
       })
       .onMatchEnd((winnerId) => {
         const playerWon = winnerId === 0;
+        // Play victory or defeat sting (t057).
+        if (playerWon) {
+          this.music.playVictory();
+        } else {
+          this.music.playDefeat();
+        }
         const matchStats = this.stats.getMatchStats();
         console.info(
           `[Game] Match over — ${playerWon ? 'Player' : 'Enemy'} team wins! ` +
@@ -359,6 +384,11 @@ export class Game {
     // round resets because Tank.reset() restores health to the (already-scaled) maxHealth.
     this.aiController.applyLeagueScalingToTeam(1, 0);
 
+    // Wire AI cannon sounds (t056): attenuated shot sound when any AI tank fires.
+    this.aiController.onShot((_tank, _proj) => {
+      this.sound.playShot();
+    });
+
     // Assign abilities to AI tanks based on the current league (t046).
     // Gold+: specific slots get abilities matching VISION.md team compositions.
     // Bronze/Silver: all abilityId fields remain null (method no-ops on those leagues).
@@ -408,6 +438,8 @@ export class Game {
    * Call this on fresh game start.
    */
   start() {
+    // Play menu music while the loadout screen is visible (t057).
+    this.music.playMenu();
     this.loadoutScreen.show((selection) => {
       this.currentLoadout = selection;
       // Persist the selection so it survives a page reload.
@@ -428,6 +460,8 @@ export class Game {
        this._applyLoadoutToAbilitySystem(selection);
        // Apply the equipped cosmetic skin to the player tank (t053).
        this.teams.player.applySkin(this.save.getEquippedSkin());
+       // Switch from menu music to combat music when the match begins (t057).
+       this.music.playCombat();
        this._startImmediately();
     });
   }
@@ -513,6 +547,9 @@ export class Game {
     this.particles.update(dt);
     this.cameraController.update(dt);
 
+    // SoundSystem: drain per-frame timers (shot cooldown, etc.) (t056).
+    this.sound.update(dt);
+
     // HUD — pass live round stats for the counters.
     // Use playerController so values reflect the active entity (tank or soldier).
     // maxHealth is passed so the bar fills to 100 % at full soldier HP (30), not 30 %.
@@ -572,7 +609,17 @@ export class Game {
       for (const proj of newProjectiles) {
         this.projectiles.add(proj);
       }
+      // Play cannon fire sound for the player (t056). Rate-limited inside playShot().
+      this.sound.playShot();
     }
+
+    // ---- Engine sound — start/stop based on movement state (t056) ----
+    if (isMoving && !this._playerWasMoving) {
+      this.sound.startEngine();
+    } else if (!isMoving && this._playerWasMoving) {
+      this.sound.stopEngine();
+    }
+    this._playerWasMoving = isMoving;
 
     // ---- On-foot soldier melee (t026/t034) ----
     // Melee swings are triggered by:
@@ -791,9 +838,11 @@ export class Game {
           this.teams.killTank(target);
         }
         this.particles.emitExplosion(hitPos, { count: 25, speed: 8 });
+        this.sound.playExplosion(); // lethal melee hit (t056)
       } else {
         // Small impact burst for a non-lethal hit.
         this.particles.emitExplosion(hitPos, { count: 8, speed: 4, lifetime: 0.3 });
+        this.sound.playImpact(); // non-lethal melee hit (t056)
       }
     }
   }
@@ -1061,6 +1110,8 @@ export class Game {
    */
   openShop() {
     this.isRunning = false;
+    // Menu music while browsing the shop (t057).
+    this.music.playMenu();
     this.shopMenu.open();
   }
 
@@ -1073,6 +1124,8 @@ export class Game {
     this.leagueDisplay.hide();
     // Pause the game loop while the loadout screen is shown.
     this.isRunning = false;
+    // Return to menu music while the loadout is open (t057).
+    this.music.playMenu();
 
     this.loadoutScreen.show((selection) => {
       this.currentLoadout = selection;
@@ -1090,6 +1143,8 @@ export class Game {
       this.playerController.soldierMeleeId = selection.melee;
       // Reconfigure AbilitySystem for the new loadout (t042).
       this._applyLoadoutToAbilitySystem(selection);
+      // Switch to combat music (t057).
+      this.music.playCombat();
 
       this.score = 0;
       // Reset match state machine first (no team events should fire during reset)
