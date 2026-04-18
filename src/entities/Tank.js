@@ -35,6 +35,41 @@ export class Tank {
      */
     this.damageMultiplier = 1.0;
 
+    // ── Ability state (t046) ────────────────────────────────────────────────
+    /**
+     * Which ability this tank owns (null = none).
+     * For AI tanks: set by AIController.assignLeagueAbilities() based on league.
+     * For the player tank: set by AbilitySystem via Game.js loadout selection.
+     * Matches the ability id keys in TankDefs (e.g. 'energyShield', 'rocketJump').
+     */
+    this.abilityId = null;
+
+    /**
+     * Seconds between uses of this tank's ability.
+     * 0 when abilityId is null.
+     */
+    this.abilityCooldown = 0;
+
+    /**
+     * energyShield: when true, all incoming damage is blocked.
+     * Duration tracked by the AIController per-tank state; this flag is
+     * cleared when the active time expires.
+     */
+    this.shieldActive = false;
+
+    /**
+     * reactiveArmor: additional flat damage-reduction fraction (0–0.5).
+     * Stacks multiplicatively with tank class armor (if any).
+     * Set to 0 when the boost expires.
+     */
+    this.armorBoost = 0;
+
+    /**
+     * lockdownMode: when true, the AI ignores movement commands so the
+     * tank holds a stationary firing position.
+     */
+    this.lockdownActive = false;
+
     // Per-round combat stats — displayed on the scoreboard (t013)
     this.kills = 0;
     this.damageDealt = 0;
@@ -155,8 +190,25 @@ export class Tank {
     });
   }
 
+  /**
+   * Apply incoming damage, respecting active ability defences.
+   *
+   * energyShield  — blocks ALL damage while active (shieldActive = true).
+   * reactiveArmor — reduces effective damage by armorBoost fraction (0–0.5).
+   *
+   * @param {number} amount — raw incoming damage
+   * @returns {number} actual HP removed (0 if shielded)
+   */
   takeDamage(amount) {
-    this.health = Math.max(0, this.health - amount);
+    // Energy shield blocks all incoming damage entirely.
+    if (this.shieldActive) return 0;
+
+    // Reactive armor reduces damage by the boost fraction (additive on top of
+    // any class armor; class armor is not tracked on Tank.js in this version).
+    const effective = amount * (1 - this.armorBoost);
+    const actual = Math.min(this.health, effective);
+    this.health = Math.max(0, this.health - effective);
+    return actual;
   }
 
   /**
@@ -188,6 +240,14 @@ export class Tank {
     this.fireCooldown = 0;
     this.kills = 0;
     this.damageDealt = 0;
+
+    // Clear transient ability effects so tanks start each round with no active
+    // shield / armor / lockdown state. Permanent ability assignment (abilityId,
+    // abilityCooldown) is NOT reset — it persists across rounds like upgrades.
+    this.shieldActive = false;
+    this.armorBoost = 0;
+    this.lockdownActive = false;
+
     // Reset turret to face forward (local rotation.y = 0).
     // Loadout properties (tank class, weapons, upgrades — added in future tasks)
     // are intentionally NOT reset here — they persist across rounds per VISION.md.

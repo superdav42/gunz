@@ -319,6 +319,12 @@ export class Game {
     // round resets because Tank.reset() restores health to the (already-scaled) maxHealth.
     this.aiController.applyLeagueScalingToTeam(1, 0);
 
+    // Assign abilities to AI tanks based on the current league (t046).
+    // Gold+: enemy and ally AI tanks at specific slots receive abilities.
+    // Bronze/Silver: all abilityId fields remain null (assignLeagueAbilities no-ops).
+    this.aiController.assignLeagueAbilities(1, 0, 'enemy'); // enemy team, all slots
+    this.aiController.assignLeagueAbilities(0, 1, 'ally');  // ally team, skip player slot 0
+
     this.hud = new HUD();
     this.killFeed = new KillFeed();
     this.scoreboard = new Scoreboard(this.teams);
