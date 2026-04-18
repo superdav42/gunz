@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { getLeagueDef } from '../data/LeagueDefs.js';
 import { Soldier } from '../entities/Soldier.js';
+import { RIVER_SPEED_TANK, RIVER_SPEED_SOLDIER } from './MapLayout.js';
 
 /**
  * AIController — drives all AI tanks and bailed AI soldiers.
@@ -199,12 +200,20 @@ export class AIController {
    * @param {import('../entities/Terrain.js').Terrain} terrain
    * @param {object} [leagueDef] — LeagueDefs entry for the player's current league.
    *   Defaults to 'bronze' when omitted. Determines enemy AI difficulty.
+   * @param {import('./MapLayout.js').MapLayout|null} [mapLayout] — for river speed penalties (t050).
    */
-  constructor(teamManager, projectileSystem, particleSystem, terrain, leagueDef) {
+  constructor(teamManager, projectileSystem, particleSystem, terrain, leagueDef, mapLayout = null) {
     this.teams = teamManager;
     this.projectiles = projectileSystem;
     this.particles = particleSystem;
     this.terrain = terrain;
+
+    /**
+     * MapLayout reference for river / mud zone speed-penalty queries (t050).
+     * Optional: if null, no penalty is applied.
+     * @type {import('./MapLayout.js').MapLayout|null}
+     */
+    this._mapLayout = mapLayout;
 
     /**
      * Per-tank transient AI state.
@@ -636,8 +645,12 @@ export class AIController {
 
     // --- Per-class movement stats ---
     // tank.speed and tank.turnRate are set by Tank._applyClassDef from TankDefs.
-    const moveSpeed = tank.speed;
     const turnSpeed = tank.turnRate;
+
+    // River / mud zone speed penalty (t050): AI tanks move at 40% speed in rivers.
+    const inRiver   = this._mapLayout !== null &&
+                      this._mapLayout.isInRiver(pos.x, pos.z);
+    const moveSpeed = tank.speed * (inRiver ? RIVER_SPEED_TANK : 1.0);
 
     // --- Per-class fire and aggro ranges ---
     // fireRange scales with the tank's effective range stat so Artillery AI
@@ -842,7 +855,11 @@ export class AIController {
     // Move forward until within preferred fire stop distance
     const stopDist = SOLDIER_FIRE_RANGE * SOLDIER_FIRE_STOP;
     if (dist > stopDist) {
-      soldier.mesh.translateZ(-soldier.moveSpeed * dt);
+      // River / mud zone speed penalty (t050): soldiers move at 60% speed in rivers.
+      const inRiver     = this._mapLayout !== null &&
+                          this._mapLayout.isInRiver(pos.x, pos.z);
+      const riverFactor = inRiver ? RIVER_SPEED_SOLDIER : 1.0;
+      soldier.mesh.translateZ(-soldier.moveSpeed * riverFactor * dt);
       // Keep on terrain and arena-clamped
       this._clampSoldier(soldier);
     }
@@ -871,8 +888,11 @@ export class AIController {
     const angle = Math.atan2(coverPos.x - pos.x, coverPos.z - pos.z);
     this._rotateSoldierToward(soldier, angle, dt);
 
-    // Move toward cover
-    soldier.mesh.translateZ(-soldier.moveSpeed * dt);
+    // Move toward cover (with river speed penalty if applicable — t050)
+    const inRiverCover  = this._mapLayout !== null &&
+                          this._mapLayout.isInRiver(pos.x, pos.z);
+    const riverFactorC  = inRiverCover ? RIVER_SPEED_SOLDIER : 1.0;
+    soldier.mesh.translateZ(-soldier.moveSpeed * riverFactorC * dt);
     this._clampSoldier(soldier);
 
     // Suppressive fire at target while retreating (if in range)
