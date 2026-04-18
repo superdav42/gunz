@@ -32,6 +32,7 @@ import { TankAbilityEffects } from '../systems/TankAbilityEffects.js';
 import { getTankDef } from '../data/TankDefs.js';
 import { GunDefs, MeleeDefs } from '../data/WeaponDefs.js';
 import { Projectile } from '../entities/Projectile.js';
+import { StructureSystem } from '../systems/StructureSystem.js';
 
 export class Game {
   constructor(canvas) {
@@ -144,6 +145,11 @@ export class Game {
     // map layout stays the same; only dynamic wrecks and projectiles are cleared).
     this.village = new VillageGenerator(this.scene, this.terrain);
 
+    // StructureSystem (t049) — destructible bridges and low walls/fences.
+    // Bridges absorb shells and collapse into rubble that blocks tank movement.
+    // Walls are destroyed by any shell hit or tank contact.
+    this.structures = new StructureSystem(this.scene, this.terrain);
+
     // Dust-emission timers
     this._playerDustTimer = 0;
     this._enemyDustTimer = 0;
@@ -165,14 +171,15 @@ export class Game {
     };
 
     this.collision = new CollisionSystem({
-      terrain: this.terrain,
-      player: this.player,
-      enemies: this._enemiesAdapter,
-      projectiles: this.projectiles,
-      treeSystem: this.trees,
-      wrecks: this.wrecks,
-      mapLayout: this.mapLayout,
-      villageSystem: this.village,
+      terrain:         this.terrain,
+      player:          this.player,
+      enemies:         this._enemiesAdapter,
+      projectiles:     this.projectiles,
+      treeSystem:      this.trees,
+      wrecks:          this.wrecks,
+      mapLayout:       this.mapLayout,
+      villageSystem:   this.village,
+      structureSystem: this.structures,
     });
 
     this.collision
@@ -222,6 +229,19 @@ export class Game {
       .onBuildingWallDestroyed((pos) => {
         // Medium debris burst when a wall panel is knocked down (t047/t048).
         this.particles.emitExplosion(pos, { count: 20, speed: 7, lifetime: 0.8 });
+      })
+      // t049 — bridge and wall feedback
+      .onBridgeHit((pos) => {
+        // Small concrete-chip burst when a shell hits but doesn't destroy a bridge
+        this.particles.emitExplosion(pos, { count: 10, speed: 5, lifetime: 0.5 });
+      })
+      .onBridgeDestroyed((pos) => {
+        // Large debris burst when the bridge collapses
+        this.particles.emitExplosion(pos, { count: 50, speed: 12, lifetime: 1.2 });
+      })
+      .onWallDestroyed((pos) => {
+        // Medium stone-fragment burst when a wall is smashed
+        this.particles.emitExplosion(pos, { count: 18, speed: 7, lifetime: 0.7 });
       });
 
     // SaveSystem: load persisted player profile from localStorage (t015).
@@ -282,6 +302,8 @@ export class Game {
         this.trees.reset();
         // Reset ability cooldowns so the player starts each round with abilities ready.
         this.abilitySystem.reset();
+        // Respawn bridges and walls so the field is fully intact next round (t049).
+        this.structures.reset();
         // Clear per-tank AI reaction timers so enemies don't carry over mid-fire
         // state from the previous round.
         this.aiController.reset();
@@ -1108,6 +1130,8 @@ export class Game {
       this.particles.reset();
       this.trees.reset();
       this.wrecks.reset();
+      // Respawn bridges and walls for the fresh match (t049).
+      this.structures.reset();
       this._playerDustTimer = 0;
       this._enemyDustTimer = 0;
       this.hud.hideGameOver();

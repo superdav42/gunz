@@ -14,6 +14,14 @@
  *     destroyed buildings stop blocking tanks (t047/t048).
  *  7. Tank-vs-building blocking: tanks are pushed away from standing buildings
  *     using the same impulse-resolve path as rocks/wrecks.
+ *  8. Projectile-vs-bridge (t049): alive bridge segments absorb shells and
+ *     accumulate damage; when HP = 0 the bridge collapses into rubble.
+ *  9. Projectile-vs-wall (t049): alive wall/fence segments absorb shells;
+ *     destroyed in one hit (wall HP = 2, shell damage = 25).
+ * 10. Tank-vs-wall contact (t049): tanks drive *through* walls — wall is
+ *     destroyed on contact; tank is NOT pushed back.
+ * 11. Tank-vs-bridge-rubble blocking (t049): collapsed bridge rubble
+ *     circles block tanks (same resolve path as wrecks).
  *
  * Callbacks (set before first update):
  *  onScoreAdd(points)                    — called when an enemy tank is destroyed
@@ -35,6 +43,9 @@
  *    victim: display name of the destroyed tank
  *  onExplosion(position, splashRadius)   — called when an explosive projectile detonates
  *  onBuildingWallDestroyed(position)     — called when a building wall is knocked down
+ *  onBridgeHit(position)                 — non-lethal shell hit on a bridge (t049)
+ *  onBridgeDestroyed(position)           — shell destroys a bridge (t049)
+ *  onWallDestroyed(position)             — shell or tank contact destroys a wall (t049)
  */
 export class CollisionSystem {
   /**
@@ -47,8 +58,9 @@ export class CollisionSystem {
    * @param {import('./WreckSystem.js').WreckSystem}           [opts.wrecks]
    * @param {import('./MapLayout.js').MapLayout}                [opts.mapLayout]
    * @param {import('../entities/Village.js').VillageGenerator} [opts.villageSystem]
+   * @param {import('./StructureSystem.js').StructureSystem}   [opts.structureSystem]
    */
-  constructor({ terrain, player, enemies, projectiles, treeSystem = null, wrecks = null, mapLayout = null, villageSystem = null }) {
+  constructor({ terrain, player, enemies, projectiles, treeSystem = null, wrecks = null, mapLayout = null, villageSystem = null, structureSystem = null }) {
     this.terrain = terrain;
     this.player = player;
     this.enemies = enemies;
@@ -57,6 +69,8 @@ export class CollisionSystem {
     this.wrecks = wrecks;
     this.mapLayout = mapLayout;
     this.villageSystem = villageSystem;
+    /** @type {import('./StructureSystem.js').StructureSystem|null} */
+    this.structureSystem = structureSystem;
 
     this._onScoreAdd = null;
     this._onPlayerDeath = null;
@@ -69,6 +83,10 @@ export class CollisionSystem {
     this._onKillFeed = null;
     this._onExplosion = null;
     this._onBuildingWallDestroyed = null;
+    // t049 — bridge and wall callbacks
+    this._onBridgeHit = null;
+    this._onBridgeDestroyed = null;
+    this._onWallDestroyed = null;
 
     /**
      * Approximate half-width of a tank hull for obstacle push-back.
@@ -178,6 +196,26 @@ export class CollisionSystem {
    */
   onBuildingWallDestroyed(cb) {
     this._onBuildingWallDestroyed = cb;
+    return this;
+  }
+
+  // t049 — bridge and wall callbacks
+
+  /** @param {(position: import('three').Vector3) => void} cb */
+  onBridgeHit(cb) {
+    this._onBridgeHit = cb;
+    return this;
+  }
+
+  /** @param {(position: import('three').Vector3) => void} cb */
+  onBridgeDestroyed(cb) {
+    this._onBridgeDestroyed = cb;
+    return this;
+  }
+
+  /** @param {(position: import('three').Vector3) => void} cb */
+  onWallDestroyed(cb) {
+    this._onWallDestroyed = cb;
     return this;
   }
 
@@ -322,6 +360,12 @@ export class CollisionSystem {
     // All projectiles vs destructible trees
     if (this.treeSystem) {
       this._checkProjectileTreeCollisions();
+    }
+
+    // t049 — projectiles vs bridges and walls
+    if (this.structureSystem) {
+      this._checkProjectileBridgeCollisions();
+      this._checkProjectileWallCollisions();
     }
 
     // Explosive projectiles that reach terrain level explode on impact. (t032)
@@ -553,6 +597,24 @@ export class CollisionSystem {
         }
       }
     }
+
+    // t049 — bridge rubble blocks tanks; alive walls are destroyed on tank contact
+    if (this.structureSystem) {
+      // Collapsed bridge rubble — push tanks back (same as wrecks)
+      const rubbleObs = this.structureSystem.bridgeRubbleObstacles;
+      if (rubbleObs.length > 0) {
+        this._resolveObstacleCollision(this.player.mesh, rubbleObs);
+        for (const enemy of this.enemies.active) {
+          this._resolveObstacleCollision(enemy.mesh, rubbleObs);
+        }
+      }
+
+      // Alive walls — tanks drive through them (wall destroyed, tank not blocked)
+      this._checkTankWallContact(this.player.mesh, this.structureSystem.walls);
+      for (const enemy of this.enemies.active) {
+        this._checkTankWallContact(enemy.mesh, this.structureSystem.walls);
+      }
+    }
   }
 
   /**
@@ -580,6 +642,195 @@ export class CollisionSystem {
           pos.x += (dx / dist) * overlap;
           pos.z += (dz / dist) * overlap;
         }
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // t049 — Bridge and wall collision helpers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Check all active projectiles against alive bridge segments.
+   *
+   * Uses a fast circumradius pre-check followed by a full OBB test in the
+   * bridge's local XZ space.  A vertical bounds check prevents shells flying
+   * far above the bridge deck from being consumed.
+   *
+   * Explosives that hit a bridge still apply splash damage to nearby tanks.
+   */
+  _checkProjectileBridgeCollisions() {
+    const bridges = this.structureSystem.bridges;
+    const projectiles = this.projectiles.active;
+
+    for (let i = projectiles.length - 1; i >= 0; i--) {
+      const p = projectiles[i];
+      const px = p.mesh.position.x;
+      const py = p.mesh.position.y;
+      const pz = p.mesh.position.z;
+
+      for (const bridge of bridges) {
+        if (!bridge.alive) continue;
+
+        // --- Fast circumradius pre-check ---
+        const dx = px - bridge.x;
+        const dz = pz - bridge.z;
+        if (dx * dx + dz * dz > bridge.radius * bridge.radius * 1.5) continue;
+
+        // --- Vertical bounds: only hit if near the bridge deck ---
+        const relY = py - bridge.groundY;
+        if (relY < -0.5 || relY > 3.0) continue;
+
+        // --- OBB test in bridge local space ---
+        // Transform (dx, dz) by -rotY to get local coordinates:
+        //   lx = dx * cos(rotY) - dz * sin(rotY)  (across bridge)
+        //   lz = dx * sin(rotY) + dz * cos(rotY)  (along bridge span)
+        const c  = Math.cos(bridge.rotY);
+        const s  = Math.sin(bridge.rotY);
+        const lx = dx * c - dz * s;
+        const lz = dx * s + dz * c;
+
+        if (Math.abs(lx) >= bridge.halfWidth + 0.5) continue;
+        if (Math.abs(lz) >= bridge.halfSpan  + 0.5) continue;
+
+        // --- Hit confirmed ---
+        const hitPos = p.mesh.position.clone();
+        this.projectiles.remove(i);
+
+        const destroyed = bridge.takeDamage(p.damage);
+
+        // Explosives apply splash even when hitting a bridge
+        if (p.splashRadius > 0) {
+          this._applySplashToEnemies(p, hitPos, null);
+          this._applySplashToPlayer(p, hitPos, null);
+          if (this._onExplosion) this._onExplosion(hitPos, p.splashRadius);
+        }
+
+        if (destroyed) {
+          if (this._onBridgeDestroyed) this._onBridgeDestroyed(hitPos);
+        } else if (!p.splashRadius) {
+          if (this._onBridgeHit) this._onBridgeHit(hitPos);
+        }
+
+        break; // projectile consumed
+      }
+    }
+  }
+
+  /**
+   * Check all active projectiles against alive wall/fence segments.
+   *
+   * Uses an OBB test with the wall's local XZ frame.  The wall thickness
+   * halfThickness is set to 1.0 (larger than the visual 0.25) to prevent
+   * fast shells from tunnelling through the thin face.
+   *
+   * Explosives that hit a wall still apply splash damage to nearby tanks.
+   */
+  _checkProjectileWallCollisions() {
+    const walls = this.structureSystem.walls;
+    const projectiles = this.projectiles.active;
+
+    for (let i = projectiles.length - 1; i >= 0; i--) {
+      const p = projectiles[i];
+      const px = p.mesh.position.x;
+      const py = p.mesh.position.y;
+      const pz = p.mesh.position.z;
+
+      for (const wall of walls) {
+        if (!wall.alive) continue;
+
+        // --- Vertical bounds: only hit if near the wall body ---
+        const relY = py - wall.groundY;
+        if (relY < -0.3 || relY > 1.5) continue;
+
+        // --- Fast outer-radius pre-check ---
+        const dx = px - wall.x;
+        const dz = pz - wall.z;
+        const outerR = wall.halfLength + wall.halfThickness + 0.5;
+        if (dx * dx + dz * dz > outerR * outerR) continue;
+
+        // --- OBB test in wall local space ---
+        // lx = along the wall long axis   (local X)
+        // lz = through the wall thickness (local Z)
+        const c  = Math.cos(wall.rotY);
+        const s  = Math.sin(wall.rotY);
+        const lx = dx * c - dz * s;
+        const lz = dx * s + dz * c;
+
+        if (Math.abs(lx) >= wall.halfLength    + 0.3) continue;
+        if (Math.abs(lz) >= wall.halfThickness + 0.3) continue;
+
+        // --- Hit confirmed ---
+        const hitPos = p.mesh.position.clone();
+        this.projectiles.remove(i);
+
+        const destroyed = wall.takeDamage(p.damage);
+
+        // Explosives apply splash even on wall hits
+        if (p.splashRadius > 0) {
+          this._applySplashToEnemies(p, hitPos, null);
+          this._applySplashToPlayer(p, hitPos, null);
+          if (this._onExplosion) this._onExplosion(hitPos, p.splashRadius);
+        }
+
+        if (destroyed) {
+          if (this._onWallDestroyed) this._onWallDestroyed(hitPos);
+        }
+
+        break; // projectile consumed
+      }
+    }
+  }
+
+  /**
+   * Check if a tank mesh is in contact with any alive wall.
+   * Per VISION.md: "Tanks drive through" walls — contact destroys the wall
+   * instantly; the tank is NOT pushed back.
+   *
+   * Uses a circle-vs-OBB closest-point test:
+   *  1. Transform the tank centre into wall local space.
+   *  2. Clamp to wall rectangle to find the nearest point on the wall.
+   *  3. If distance from tank centre to nearest point < tankRadius → destroy wall.
+   *
+   * @param {import('three').Object3D}            tankMesh
+   * @param {import('../entities/Wall.js').Wall[]} walls
+   */
+  _checkTankWallContact(tankMesh, walls) {
+    const tp = tankMesh.position;
+    const tr = this._tankRadius;
+
+    for (const wall of walls) {
+      if (!wall.alive) continue;
+
+      const dx = tp.x - wall.x;
+      const dz = tp.z - wall.z;
+
+      // --- Fast outer-radius pre-check ---
+      const outerR = wall.halfLength + tr + 1;
+      if (dx * dx + dz * dz > outerR * outerR) continue;
+
+      // --- Transform tank centre to wall local space ---
+      const c  = Math.cos(wall.rotY);
+      const s  = Math.sin(wall.rotY);
+      const lx = dx * c - dz * s;   // along wall long axis
+      const lz = dx * s + dz * c;   // through wall thickness
+
+      // Clamp to wall OBB rectangle
+      const clampedLx = lx < -wall.halfLength    ? -wall.halfLength    :
+                        lx >  wall.halfLength     ?  wall.halfLength    : lx;
+      const clampedLz = lz < -wall.halfThickness ? -wall.halfThickness :
+                        lz >  wall.halfThickness  ?  wall.halfThickness : lz;
+
+      // Squared distance from tank centre to nearest point on wall rectangle
+      const nearDx    = lx - clampedLx;
+      const nearDz    = lz - clampedLz;
+      const nearDist2 = nearDx * nearDx + nearDz * nearDz;
+
+      if (nearDist2 < tr * tr) {
+        // Tank contact: destroy wall, emit feedback
+        const hitPos = tp.clone();
+        wall.destroy();
+        if (this._onWallDestroyed) this._onWallDestroyed(hitPos);
       }
     }
   }
