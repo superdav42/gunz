@@ -30,9 +30,17 @@ import {
 const mockScene   = { add: () => {} };
 const mockTerrain = { getHeightAt: () => 0 };
 
-/** Construct a MapLayout with mock dependencies. */
+/**
+ * Module-scope layout instance — MapLayout construction is stateless for
+ * the assertions in this file (isInRiver() depends only on the constant
+ * RIVER_DEFS, not on scene/terrain state).  Shared to avoid redundant
+ * Three.js geometry allocations across the 19 tests.
+ */
+const layout = new MapLayout(mockScene, mockTerrain);
+
+/** @deprecated Use module-scope `layout` directly; kept for clarity in old calls. */
 function makeLayout() {
-  return new MapLayout(mockScene, mockTerrain);
+  return layout;
 }
 
 // ── Speed constant tests ──────────────────────────────────────────────────────

@@ -648,9 +648,7 @@ export class AIController {
     const turnSpeed = tank.turnRate;
 
     // River / mud zone speed penalty (t050): AI tanks move at 40% speed in rivers.
-    const inRiver   = this._mapLayout !== null &&
-                      this._mapLayout.isInRiver(pos.x, pos.z);
-    const moveSpeed = tank.speed * (inRiver ? RIVER_SPEED_TANK : 1.0);
+    const moveSpeed = tank.speed * this._riverSpeedFactor(pos, RIVER_SPEED_TANK);
 
     // --- Per-class fire and aggro ranges ---
     // fireRange scales with the tank's effective range stat so Artillery AI
@@ -856,10 +854,7 @@ export class AIController {
     const stopDist = SOLDIER_FIRE_RANGE * SOLDIER_FIRE_STOP;
     if (dist > stopDist) {
       // River / mud zone speed penalty (t050): soldiers move at 60% speed in rivers.
-      const inRiver     = this._mapLayout !== null &&
-                          this._mapLayout.isInRiver(pos.x, pos.z);
-      const riverFactor = inRiver ? RIVER_SPEED_SOLDIER : 1.0;
-      soldier.mesh.translateZ(-soldier.moveSpeed * riverFactor * dt);
+      soldier.mesh.translateZ(-soldier.moveSpeed * this._riverSpeedFactor(pos, RIVER_SPEED_SOLDIER) * dt);
       // Keep on terrain and arena-clamped
       this._clampSoldier(soldier);
     }
@@ -889,10 +884,7 @@ export class AIController {
     this._rotateSoldierToward(soldier, angle, dt);
 
     // Move toward cover (with river speed penalty if applicable — t050)
-    const inRiverCover  = this._mapLayout !== null &&
-                          this._mapLayout.isInRiver(pos.x, pos.z);
-    const riverFactorC  = inRiverCover ? RIVER_SPEED_SOLDIER : 1.0;
-    soldier.mesh.translateZ(-soldier.moveSpeed * riverFactorC * dt);
+    soldier.mesh.translateZ(-soldier.moveSpeed * this._riverSpeedFactor(pos, RIVER_SPEED_SOLDIER) * dt);
     this._clampSoldier(soldier);
 
     // Suppressive fire at target while retreating (if in range)
@@ -965,6 +957,22 @@ export class AIController {
 
     // Restore original rotation; visual facing handled by _rotateSoldierToward
     soldier.mesh.rotation.y = prevRotY;
+  }
+
+  /**
+   * Return the speed multiplier for a world position.
+   * Returns `riverFactor` when the position is inside a river/mud zone,
+   * otherwise 1.0 (no penalty).  Safe to call when `_mapLayout` is null.
+   *
+   * @param {{x: number, z: number}} pos — world XZ position (mesh.position works)
+   * @param {number} riverFactor — penalty factor (RIVER_SPEED_TANK or RIVER_SPEED_SOLDIER)
+   * @returns {number}
+   * @private
+   */
+  _riverSpeedFactor(pos, riverFactor) {
+    return (this._mapLayout !== null && this._mapLayout.isInRiver(pos.x, pos.z))
+      ? riverFactor
+      : 1.0;
   }
 
   /**
