@@ -408,6 +408,333 @@
       #touch-controls { display: none; }
     }
 
+    /* === Shop Menu (t022: league-gated shop) === */
+    #shop-menu {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.80);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 200;
+    }
+
+    #shop-menu.hidden {
+      display: none;
+    }
+
+    .shop-panel {
+      background: rgba(10, 14, 22, 0.97);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 12px;
+      width: min(820px, 96vw);
+      max-height: 86vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+    }
+
+    .shop-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 20px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      flex-shrink: 0;
+    }
+
+    .shop-title {
+      color: #fff;
+      font-size: 18px;
+      font-weight: 900;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      flex: 1;
+    }
+
+    .shop-meta {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .shop-money {
+      color: #ffd700;
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    .shop-league-badge {
+      padding: 3px 10px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+
+    .shop-league-bronze   { background: #cd7f32; color: #fff; }
+    .shop-league-silver   { background: #a8a9ad; color: #000; }
+    .shop-league-gold     { background: #ffd700; color: #000; }
+    .shop-league-platinum { background: #e5e4e2; color: #000; }
+    .shop-league-diamond  { background: #b9f2ff; color: #000; }
+    .shop-league-champion { background: linear-gradient(90deg, #f90, #f00); color: #fff; }
+
+    .shop-close-btn {
+      background: none;
+      border: 1px solid rgba(255,255,255,0.3);
+      color: #fff;
+      border-radius: 6px;
+      width: 32px;
+      height: 32px;
+      cursor: pointer;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .shop-close-btn:hover { background: rgba(255,255,255,0.1); }
+
+    .shop-tabs {
+      display: flex;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+      flex-shrink: 0;
+    }
+
+    .shop-tab-btn {
+      flex: 1;
+      padding: 10px;
+      background: none;
+      border: none;
+      color: rgba(255,255,255,0.5);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      cursor: pointer;
+      border-bottom: 3px solid transparent;
+      transition: color 0.15s, border-color 0.15s;
+    }
+
+    .shop-tab-btn.active {
+      color: #fff;
+      border-bottom-color: #4caf50;
+    }
+
+    .shop-tab-btn:hover:not(.active) { color: rgba(255,255,255,0.75); }
+
+    .shop-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 20px;
+    }
+
+    /* Cards grid */
+    .shop-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 12px;
+    }
+
+    .shop-card {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 8px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .shop-card.owned { border-color: rgba(76, 175, 80, 0.5); background: rgba(76,175,80,0.07); }
+    .shop-card.locked { opacity: 0.6; }
+
+    .shop-card-name {
+      color: #fff;
+      font-size: 13px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .shop-card-desc {
+      color: rgba(255,255,255,0.55);
+      font-size: 11px;
+      line-height: 1.4;
+      flex: 1;
+    }
+
+    .shop-card-stats {
+      display: flex;
+      gap: 8px;
+      font-size: 11px;
+      color: rgba(255,255,255,0.7);
+      flex-wrap: wrap;
+    }
+
+    .shop-card-footer {
+      margin-top: 4px;
+    }
+
+    .shop-req-label {
+      font-size: 10px;
+      color: #ff9800;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+    }
+
+    .shop-ability-tag {
+      font-size: 9px;
+      background: rgba(100, 180, 255, 0.25);
+      color: #90caf9;
+      border-radius: 3px;
+      padding: 1px 5px;
+      font-weight: 700;
+    }
+
+    .shop-type-tag {
+      font-size: 9px;
+      background: rgba(255, 152, 0, 0.25);
+      color: #ffcc80;
+      border-radius: 3px;
+      padding: 1px 5px;
+      font-weight: 700;
+    }
+
+    /* Buy button */
+    .shop-buy-btn {
+      padding: 6px 12px;
+      background: #4caf50;
+      color: #fff;
+      border: none;
+      border-radius: 5px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .shop-buy-btn:hover:not(.disabled) { background: #43a047; }
+    .shop-buy-btn.disabled, .shop-buy-btn:disabled {
+      background: rgba(255,255,255,0.1);
+      color: rgba(255,255,255,0.35);
+      cursor: not-allowed;
+    }
+
+    .shop-owned-label {
+      color: #4caf50;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .shop-free-label {
+      color: #aaa;
+      font-size: 12px;
+    }
+
+    .shop-maxed-label {
+      color: #ffd700;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .shop-league-cap-label {
+      color: #ff9800;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    /* Weapon groups */
+    .shop-weapon-group { margin-bottom: 20px; }
+    .shop-group-label {
+      color: rgba(255,255,255,0.5);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+
+    /* Upgrade rows */
+    .shop-upgrade-group { margin-bottom: 20px; }
+
+    .shop-upgrade-row {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+
+    .shop-upgrade-row.maxed .shop-upgrade-name { color: rgba(255,255,255,0.5); }
+    .shop-upgrade-row.at-cap .shop-upgrade-name { color: rgba(255,152,0,0.8); }
+
+    .shop-upgrade-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .shop-upgrade-name {
+      color: #fff;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .shop-upgrade-effect {
+      color: rgba(255,255,255,0.5);
+      font-size: 11px;
+    }
+
+    .shop-upgrade-tiers {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .tier-pip {
+      width: 10px;
+      height: 10px;
+      border-radius: 2px;
+      border: 1px solid rgba(255,255,255,0.3);
+      background: transparent;
+    }
+
+    .tier-pip.filled { background: #4caf50; border-color: #4caf50; }
+    .tier-pip.cap-marker { border-color: #ff9800; }
+
+    .tier-count {
+      color: rgba(255,255,255,0.4);
+      font-size: 10px;
+      margin-left: 4px;
+    }
+
+    .shop-upgrade-action { text-align: right; min-width: 80px; }
+
+    /* Flash messages */
+    .shop-flash {
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 700;
+      text-align: center;
+      margin-bottom: 0;
+    }
+
+    .shop-flash-success { background: rgba(76,175,80,0.25); color: #81c784; }
+    .shop-flash-error   { background: rgba(244,67,54,0.25);  color: #e57373; }
+
+    @media (max-width: 540px) {
+      .shop-grid { grid-template-columns: 1fr 1fr; }
+      .shop-upgrade-row { grid-template-columns: 1fr auto; }
+      .shop-upgrade-tiers { display: none; }
+    }
+
     /* === Scoreboard overlay (t013) === */
     .sb-overlay {
       position: fixed;
@@ -649,6 +976,9 @@
     <div class="score-line">Score: <span id="final-score">0</span></div>
     <button id="restart-btn">Play Again</button>
   </div>
+
+  <!-- Shop Menu (t022: league-gated shop) — hidden until opened via ShopMenu.open() -->
+  <div id="shop-menu" class="hidden"></div>
 
   <script type="module" src="/src/main.js"></script>
 </body>
