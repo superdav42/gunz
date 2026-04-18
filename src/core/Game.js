@@ -106,10 +106,12 @@ export class Game {
 
     // PlayerController manages tank vs. on-foot soldier mode for the human player.
     // It exposes a `mesh` getter so CameraController always follows the active entity.
+    // mapLayout passed so river/mud zone speed penalties are applied (t050).
     this.playerController = new PlayerController({
-      tank:    this.player,
-      scene:   this.scene,
-      terrain: this.terrain,
+      tank:      this.player,
+      scene:     this.scene,
+      terrain:   this.terrain,
+      mapLayout: this.mapLayout,
     });
 
     // t029 — Register / unregister the player's soldier with TeamManager so the
@@ -362,12 +364,14 @@ export class Game {
 
     // AIController drives all 10 AI tanks (team 0 slots 1-5 as allies, team 1 all 6 as enemies).
     // Passes the league def so enemy AI uses the correct difficulty multipliers.
+    // mapLayout passed so river/mud zone speed penalties apply to AI movement (t050).
     this.aiController = new AIController(
       this.teams,
       this.projectiles,
       this.particles,
       this.terrain,
-      currentLeagueDef
+      currentLeagueDef,
+      this.mapLayout
     );
 
     // Apply HP and damage multipliers to the enemy team (team 1) based on league.

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { Soldier } from '../entities/Soldier.js';
+import { RIVER_SPEED_TANK, RIVER_SPEED_SOLDIER } from '../systems/MapLayout.js';
 
 /**
  * Distance (units) within which the on-foot soldier can re-enter the idle tank.
@@ -33,15 +34,23 @@ const ARENA_BOUND = 90;
 export class PlayerController {
   /**
    * @param {object}  opts
-   * @param {import('../entities/Tank.js').Tank}       opts.tank    — player tank entity
+   * @param {import('../entities/Tank.js').Tank}       opts.tank      — player tank entity
    * @param {THREE.Scene}                              opts.scene
    * @param {import('../entities/Terrain.js').Terrain} opts.terrain
+   * @param {import('../systems/MapLayout.js').MapLayout} [opts.mapLayout] — for river speed penalties (t050)
    */
-  constructor({ tank, scene, terrain }) {
-    this.tank    = tank;
-    this.soldier = null;     // Soldier entity when on foot, null otherwise
-    this.scene   = scene;
-    this.terrain = terrain;
+  constructor({ tank, scene, terrain, mapLayout = null }) {
+    this.tank      = tank;
+    this.soldier   = null;     // Soldier entity when on foot, null otherwise
+    this.scene     = scene;
+    this.terrain   = terrain;
+
+    /**
+     * MapLayout reference for river / mud zone speed-penalty queries (t050).
+     * Optional: if null, no penalty is applied (e.g. tests or early boot).
+     * @type {import('../systems/MapLayout.js').MapLayout|null}
+     */
+    this.mapLayout = mapLayout;
 
     /** @type {'tank' | 'soldier'} */
     this.mode = 'tank';
@@ -298,8 +307,14 @@ export class PlayerController {
 
     // Use the tank's class-defined movement stats (set by Tank._applyClassDef).
     // speed is in world-units/second; turnRate is in radians/second.
-    const moveSpeed = tank.speed;
     const turnSpeed = tank.turnRate;
+
+    // River / mud zone speed penalty (t050): tanks move at 40% speed in rivers.
+    // Check current position before movement so the penalty applies as soon as
+    // the tank enters the zone.
+    const inRiver   = this.mapLayout !== null &&
+                      this.mapLayout.isInRiver(tank.mesh.position.x, tank.mesh.position.z);
+    const moveSpeed = tank.speed * (inRiver ? RIVER_SPEED_TANK : 1.0);
 
     // Lockdown Mode (t043): suppress all hull movement while active.
     // Turret can still track the target; firing continues at doubled rate.
@@ -353,8 +368,13 @@ export class PlayerController {
 
     const moving = input.forward || input.backward;
 
-    if (input.forward)  soldier.mesh.translateZ(-soldier.moveSpeed * dt);
-    if (input.backward) soldier.mesh.translateZ(soldier.moveSpeed * 0.6 * dt);
+    // River / mud zone speed penalty (t050): soldiers move at 60% speed in rivers.
+    const inRiver     = this.mapLayout !== null &&
+                        this.mapLayout.isInRiver(soldier.mesh.position.x, soldier.mesh.position.z);
+    const riverFactor = inRiver ? RIVER_SPEED_SOLDIER : 1.0;
+
+    if (input.forward)  soldier.mesh.translateZ(-soldier.moveSpeed * riverFactor * dt);
+    if (input.backward) soldier.mesh.translateZ(soldier.moveSpeed * 0.6 * riverFactor * dt);
     if (input.left)     soldier.mesh.rotation.y += soldier.turnSpeed * dt;
     if (input.right)    soldier.mesh.rotation.y -= soldier.turnSpeed * dt;
 
