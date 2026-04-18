@@ -192,15 +192,34 @@ export class Game {
     this.collision
       .onScoreAdd(pts => { this.score += pts; })
       .onPlayerDeath(() => this._onPlayerTankDestroyed())
-      .onHit((pos) => {
-        this.particles.emitExplosion(pos, { count: 15, speed: 6, lifetime: 0.6 });
+      .onHit((pos, owner) => {
+        if (owner === 'enemy') {
+          // Enemy shell struck the player tank (non-lethal, non-explosive). (t058)
+          // Use sharp metallic sparks instead of the heavier explosion burst.
+          this.particles.emitImpactSparks(pos);
+          // Screen shake + damage flash to signal the hit to the player. (t058)
+          this.cameraController.shake(1.4);
+          this.hud.flashDamage();
+        } else {
+          // Player shell struck an enemy, or shell hit a wreck/structure.
+          this.particles.emitExplosion(pos, { count: 15, speed: 6, lifetime: 0.6 });
+        }
         // Play impact sound for non-lethal shell hits (t056).
         this.sound.playImpact();
       })
       .onKill((pos, owner, tankData) => {
         this.particles.emitExplosion(pos, { count: 35, speed: 10 });
+        // Lingering smoke column on every tank kill. (t058)
+        this.particles.emitSmoke(pos, { count: 12, lifetime: 2.2 });
         // Play explosion sound whenever any tank is destroyed (t056).
         this.sound.playExplosion();
+        // Screen shake: heavier when the player's own tank is killed. (t058)
+        if (owner === 'enemy') {
+          this.cameraController.shake(3.5);
+        } else {
+          // Player killed an enemy tank — satisfying rumble.
+          this.cameraController.shake(0.9);
+        }
         // Leave a wreck at the tank's last position as indestructible cover
         if (tankData) {
           this.wrecks.add(tankData.position, tankData.rotationY);
@@ -236,8 +255,14 @@ export class Game {
         // Particle count scales with splash radius so bigger weapons feel bigger.
         const count = Math.round(25 + splashRadius * 3);
         this.particles.emitExplosion(pos, { count, speed: 10, lifetime: 1.0 });
+        // Lingering smoke makes bigger explosions look more impactful. (t058)
+        const smokeCount = Math.round(6 + splashRadius * 1.5);
+        this.particles.emitSmoke(pos, { count: smokeCount, lifetime: 1.8 });
         // Explosive rounds also play the explosion sound (t056).
         this.sound.playExplosion();
+        // Nearby explosions cause proportional screen shake. (t058)
+        const shakeAmp = Math.min(1.8, 0.2 + splashRadius * 0.12);
+        this.cameraController.shake(shakeAmp);
       })
       .onBuildingWallDestroyed((pos) => {
         // Medium debris burst when a wall panel is knocked down (t047/t048).
@@ -1111,8 +1136,15 @@ export class Game {
         this.particles.emitExplosion(hitPos, { count: 6, speed: 3, lifetime: 0.3 });
 
         if (soldier.health <= 0) {
+          // Player soldier killed — big shake + flash. (t058)
+          this.cameraController.shake(2.5);
+          this.hud.flashDamage();
           this._onPlayerSoldierDestroyed();
           break; // soldier removed; stop checking more projectiles this frame
+        } else {
+          // Non-lethal hit on player soldier. (t058)
+          this.cameraController.shake(0.9);
+          this.hud.flashDamage();
         }
       }
     }

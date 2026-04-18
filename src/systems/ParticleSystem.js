@@ -10,6 +10,8 @@
  *   emitExplosion(position, opts)   — burst of fire/smoke on tank/shell impact
  *   emitMuzzleFlash(position, dir)  — brief flash cone at barrel tip on fire
  *   emitDust(position)              — rising dirt puff behind moving tracks
+ *   emitImpactSparks(position)      — metallic white/blue sparks for non-lethal hits (t058)
+ *   emitSmoke(position, opts)       — slow-rising dark smoke plume post-explosion (t058)
  */
 
 import * as THREE from 'three';
@@ -18,7 +20,7 @@ import * as THREE from 'three';
 // Constants
 // ---------------------------------------------------------------------------
 
-const POOL_SIZE = 300;
+const POOL_SIZE = 500;
 
 // Shared geometry — all particles are scaled cubes.
 const _GEO = new THREE.BoxGeometry(0.25, 0.25, 0.25);
@@ -278,6 +280,107 @@ export class ParticleSystem {
   }
 
   /**
+   * Emit metallic impact sparks for a non-lethal shell hit. (t058)
+   *
+   * Small, fast white/blue particles that tumble outward with strong gravity,
+   * giving tank hits a crisp "ricochet spark" feel distinct from the heavier
+   * explosion burst used for kills.
+   *
+   * @param {THREE.Vector3} position  World-space hit point.
+   */
+  emitImpactSparks(position) {
+    const count = 14;
+    for (let i = 0; i < count; i++) {
+      const p = this._acquire();
+      if (!p) return;
+
+      const theta = Math.random() * Math.PI * 2;
+      const phi   = Math.random() * Math.PI * 0.55; // mostly outward-upward cone
+      const speed = 7 + Math.random() * 12;
+
+      p.velocity.set(
+        Math.sin(phi) * Math.cos(theta) * speed,
+        Math.abs(Math.cos(phi)) * speed * 0.5 + 0.5,
+        Math.sin(phi) * Math.sin(theta) * speed
+      );
+
+      p.position.copy(position);
+      p.life     = 0.12 + Math.random() * 0.16;
+      p.maxLife  = p.life;
+      p.gravity  = 14; // sparks fall fast
+
+      // White core → steel blue on fade
+      const r = Math.random();
+      if (r < 0.5) {
+        p.colorStart.setHex(0xffffff); // bright white
+        p.colorEnd.setHex(0x88aaff);   // cool blue
+      } else {
+        p.colorStart.setHex(0xffee88); // yellow-white
+        p.colorEnd.setHex(0xff8800);   // amber
+      }
+
+      p.startScale = 0.04 + Math.random() * 0.07;
+
+      p.mesh.material.color.copy(p.colorStart);
+      p.mesh.material.opacity = 1;
+      p.mesh.scale.setScalar(p.startScale);
+      p.mesh.position.copy(position);
+    }
+  }
+
+  /**
+   * Emit a slow-rising dark smoke plume after an explosion. (t058)
+   *
+   * Large, semi-transparent particles that drift upward and fade out,
+   * creating a lingering smoke column that makes kills look impactful.
+   *
+   * @param {THREE.Vector3} position  World-space explosion centre.
+   * @param {object}        [opts]
+   * @param {number}        [opts.count=10]      Particle count.
+   * @param {number}        [opts.lifetime=2.0]  Max smoke lifetime (s).
+   */
+  emitSmoke(position, opts = {}) {
+    const count    = opts.count    ?? 10;
+    const lifetime = opts.lifetime ?? 2.0;
+
+    for (let i = 0; i < count; i++) {
+      const p = this._acquire();
+      if (!p) return;
+
+      const angle = Math.random() * Math.PI * 2;
+      const radius = Math.random() * 1.5;
+
+      p.velocity.set(
+        Math.cos(angle) * radius * 0.5,
+        1.2 + Math.random() * 1.5, // rises slowly
+        Math.sin(angle) * radius * 0.5
+      );
+
+      p.position.set(
+        position.x + Math.cos(angle) * radius,
+        position.y + Math.random() * 0.5,
+        position.z + Math.sin(angle) * radius
+      );
+
+      p.life    = lifetime * (0.7 + Math.random() * 0.3);
+      p.maxLife = p.life;
+      p.gravity = -0.4; // slight upward drift (negative = rises)
+
+      // Dark charcoal smoke that fades to transparent
+      const shade = Math.floor(20 + Math.random() * 35);
+      p.colorStart.setRGB(shade / 255, shade / 255, shade / 255);
+      p.colorEnd.setRGB(shade / 255, shade / 255, shade / 255);
+
+      p.startScale = 0.8 + Math.random() * 1.2;
+
+      p.mesh.material.color.copy(p.colorStart);
+      p.mesh.material.opacity = 0.45;
+      p.mesh.scale.setScalar(p.startScale);
+      p.mesh.position.copy(p.position);
+    }
+  }
+
+  /**
    * Emit debris when a tree is destroyed by a shell.
    * Spawns two batches:
    *   - Wood splinters (dark brown) that tumble outward with gravity
@@ -383,10 +486,20 @@ export class ParticleSystem {
 
       // Interpolate colour and opacity
       p.mesh.material.color.lerpColors(p.colorStart, p.colorEnd, t);
-      p.mesh.material.opacity = 1 - t;
 
-      // Shrink toward zero
-      p.mesh.scale.setScalar(Math.max(0.001, p.startScale * (1 - t * 0.8)));
+      // Smoke particles (large scale, slow velocity) billow outward then fade;
+      // regular particles shrink toward zero.  Distinguish by startScale:
+      // smoke uses startScale > 0.5 and has near-zero gravity magnitude.
+      if (p.startScale >= 0.8 && Math.abs(p.gravity) <= 0.5) {
+        // Smoke: grow slightly as it rises, fade out over lifetime
+        const growFactor = 1 + t * 0.6;
+        p.mesh.scale.setScalar(Math.max(0.001, p.startScale * growFactor));
+        p.mesh.material.opacity = 0.45 * (1 - t);
+      } else {
+        p.mesh.material.opacity = 1 - t;
+        // Shrink toward zero
+        p.mesh.scale.setScalar(Math.max(0.001, p.startScale * (1 - t * 0.8)));
+      }
     }
   }
 

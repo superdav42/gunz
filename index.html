@@ -72,14 +72,40 @@
       border-radius: 7px;
       overflow: hidden;
       border: 1px solid rgba(255,255,255,0.2);
+      position: relative; /* needed for ghost positioning (t058) */
+    }
+
+    /* Ghost health bar — lingers at the previous HP value, then fades. (t058) */
+    .health-bar-ghost {
+      position: absolute;
+      top: 0;
+      left: 0;
+      height: 100%;
+      width: 100%;
+      background: #ff9800;
+      border-radius: 7px;
+      transition: width 0.75s ease-out;
     }
 
     .health-bar-inner {
+      position: relative; /* sit on top of ghost bar (t058) */
+      z-index: 1;
       height: 100%;
       width: 100%;
       background: #4caf50;
       border-radius: 7px;
-      transition: width 0.3s, background-color 0.3s;
+      transition: width 0.18s ease-out, background-color 0.3s;
+    }
+
+    /* Full-screen damage flash overlay (t058) */
+    #damage-flash {
+      position: fixed;
+      inset: 0;
+      background: rgba(200, 0, 0, 0.45);
+      pointer-events: none;
+      z-index: 5;
+      opacity: 0;
+      transition: opacity 0.12s ease-out;
     }
 
     /* === Touch controls overlay === */
@@ -1731,11 +1757,16 @@
 <body>
   <canvas id="game-canvas"></canvas>
 
+  <!-- Full-screen damage flash (t058) — briefly tints red when player is hit -->
+  <div id="damage-flash"></div>
+
   <!-- HUD -->
   <div id="hud">
     <div class="hud-left">
       <span class="hud-label">Health</span>
       <div class="health-bar-outer">
+        <!-- Ghost bar lingers at old HP, then fades back (t058) -->
+        <div class="health-bar-ghost" id="health-ghost"></div>
         <div class="health-bar-inner" id="health-fill"></div>
       </div>
       <span class="hud-label">Ammo: <span class="hud-value" id="ammo">30</span></span>

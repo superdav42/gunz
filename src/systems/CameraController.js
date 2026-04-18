@@ -63,6 +63,15 @@ export class CameraController {
     this._currentPos = new THREE.Vector3();
     this._desiredPos = new THREE.Vector3();
     this._lookAt     = new THREE.Vector3();
+
+    /**
+     * Screen-shake: current amplitude in world units.
+     * Decays exponentially toward zero each frame.
+     * Call shake(amplitude) to trigger; larger values = more violent shake.
+     */
+    this._shakeAmp   = 0;
+    /** Decay rate constant — higher = faster decay. */
+    this._shakeDecay = 9;
   }
 
   // ---------------------------------------------------------------------------
@@ -75,6 +84,25 @@ export class CameraController {
    */
   setTarget(target) {
     this.target = target;
+  }
+
+  /**
+   * Trigger a screen-shake impulse.
+   *
+   * Multiple calls within the same frame are safe: the amplitude is clamped
+   * to the maximum of the existing and new values so that overlapping events
+   * don't stack beyond a sensible ceiling.
+   *
+   * Amplitude guide:
+   *   0.3 — distant explosion
+   *   0.8 — nearby enemy tank destroyed
+   *   1.5 — direct hit on player (non-lethal)
+   *   3.0 — player tank destroyed
+   *
+   * @param {number} amplitude  Peak displacement in world units (≥ 0).
+   */
+  shake(amplitude) {
+    this._shakeAmp = Math.max(this._shakeAmp, amplitude);
   }
 
   /**
@@ -109,6 +137,18 @@ export class CameraController {
     // Smooth follow of camera position.
     this._currentPos.lerp(this._desiredPos, 1 - Math.exp(-this.smoothing * dt));
     this.camera.position.copy(this._currentPos);
+
+    // ---- Screen shake (t058) ----
+    // Apply a random offset that decays exponentially toward zero.
+    if (this._shakeAmp > 0.005) {
+      this._shakeAmp *= Math.exp(-this._shakeDecay * dt);
+      const s = this._shakeAmp;
+      this.camera.position.x += (Math.random() - 0.5) * 2 * s;
+      this.camera.position.y += (Math.random() - 0.5) * s; // less vertical swing
+      this.camera.position.z += (Math.random() - 0.5) * 2 * s;
+    } else {
+      this._shakeAmp = 0;
+    }
 
     // Look-at point: slightly ahead of and at the height of the target.
     this._lookAt
