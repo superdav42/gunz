@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { Terrain } from '../entities/Terrain.js';
+import { VillageGenerator } from '../entities/Village.js';
 import { InputSystem } from '../systems/InputSystem.js';
 import { ProjectileSystem } from '../systems/ProjectileSystem.js';
 import { CollisionSystem } from '../systems/CollisionSystem.js';
@@ -125,6 +126,11 @@ export class Game {
     this.wrecks = new WreckSystem(this.scene);
     this.wrecks.spawnInitial(this.terrain);
 
+    // VillageGenerator — procedural village clusters with destructible buildings
+    // and dirt paths (t047/t048).  Buildings persist across round resets (the
+    // map layout stays the same; only dynamic wrecks and projectiles are cleared).
+    this.village = new VillageGenerator(this.scene, this.terrain);
+
     // Dust-emission timers
     this._playerDustTimer = 0;
     this._enemyDustTimer = 0;
@@ -152,6 +158,7 @@ export class Game {
       projectiles: this.projectiles,
       treeSystem: this.trees,
       wrecks: this.wrecks,
+      villageSystem: this.village,
     });
 
     this.collision
@@ -189,6 +196,10 @@ export class Game {
         // Particle count scales with splash radius so bigger weapons feel bigger.
         const count = Math.round(25 + splashRadius * 3);
         this.particles.emitExplosion(pos, { count, speed: 10, lifetime: 1.0 });
+      })
+      .onBuildingWallDestroyed((pos) => {
+        // Medium debris burst when a wall panel is knocked down (t047/t048).
+        this.particles.emitExplosion(pos, { count: 20, speed: 7, lifetime: 0.8 });
       });
 
     // SaveSystem: load persisted player profile from localStorage (t015).
