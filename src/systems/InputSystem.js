@@ -15,8 +15,9 @@ export class InputSystem {
     // Touch joystick state
     this._joystick = { active: false, id: null, startX: 0, startY: 0, dx: 0, dy: 0 };
     this._aimTouch = { active: false, id: null, x: 0, y: 0 };
-    this._fireRequested  = false;
-    this._meleeRequested = false;
+    this._fireRequested   = false;
+    this._meleeRequested  = false;
+    this._reloadRequested = false;
     this._turretAngle = null;
     /** One-shot: true on the frame E is pressed (exit/enter vehicle). */
     this._exitVehicleRequested = false;
@@ -36,6 +37,8 @@ export class InputSystem {
       if (e.code === 'KeyE')  this._exitVehicleRequested = true;
       // F key — on-foot melee attack (VISION.md "Controls" table)
       if (e.code === 'KeyF') this._meleeRequested = true;
+      // R key — manual reload for on-foot gun (t030)
+      if (e.code === 'KeyR') this._reloadRequested = true;
       // Prevent Tab from shifting browser focus while held for the scoreboard
       if (e.code === 'Tab') e.preventDefault();
     });
@@ -156,6 +159,8 @@ export class InputSystem {
       fire: this._fireRequested,
       /** One-shot: F key or middle-click triggers an on-foot melee swing. */
       melee: this._meleeRequested,
+      /** One-shot: R key triggers a manual reload for the on-foot gun (t030). */
+      reload: this._reloadRequested,
       turretAngle: this._turretAngle,
       /** true while Tab is held — shows/hides the scoreboard overlay */
       tabHeld: !!this._keys['Tab'],
@@ -166,6 +171,7 @@ export class InputSystem {
     // Reset one-shot inputs
     this._fireRequested        = false;
     this._meleeRequested       = false;
+    this._reloadRequested      = false;
     this._exitVehicleRequested = false;
 
     return state;

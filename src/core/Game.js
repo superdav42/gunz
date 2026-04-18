@@ -348,6 +348,8 @@ export class Game {
         `[Game] Loadout selected — tank:${selection.tank} ` +
         `gun:${selection.gun} melee:${selection.melee}`
       );
+      // Apply on-foot gun selection so soldiers spawn with the chosen weapon (t031).
+      this.playerController.soldierGunId = selection.gun;
       this._startImmediately();
     });
   }
@@ -437,15 +439,19 @@ export class Game {
    * @param {number} dt
    */
   _updatePlayer(input, dt) {
-    const { newProjectile, isMoving } = this.playerController.update(input, dt);
+    const { newProjectiles, isMoving } = this.playerController.update(input, dt);
 
-    if (newProjectile) {
-      this.projectiles.add(newProjectile);
-      const flashDir = newProjectile.velocity.clone().normalize();
+    // Emit muzzle flash once per shot (using the first projectile for position/direction).
+    // Shotgun fires 8 pellets simultaneously — a single flash for the burst is correct.
+    if (newProjectiles.length > 0) {
+      const first = newProjectiles[0];
       this.particles.emitMuzzleFlash(
-        newProjectile.mesh.position.clone(),
-        flashDir
+        first.mesh.position.clone(),
+        first.velocity.clone().normalize()
       );
+      for (const proj of newProjectiles) {
+        this.projectiles.add(proj);
+      }
     }
 
     // ---- On-foot soldier melee (t026) ----
@@ -610,6 +616,8 @@ export class Game {
         `[Game] Loadout updated — tank:${selection.tank} ` +
         `gun:${selection.gun} melee:${selection.melee}`
       );
+      // Apply on-foot gun selection so soldiers spawn with the chosen weapon (t031).
+      this.playerController.soldierGunId = selection.gun;
 
       this.score = 0;
       // Reset match state machine first (no team events should fire during reset)
