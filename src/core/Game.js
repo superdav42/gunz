@@ -490,30 +490,27 @@ export class Game {
         .filter(s => s.teamId === 1 && s.health > 0);
       const meleeTargets = [...this.teams.getEnemyTanks(), ...aiSoldiers];
       const hits = activeSoldier.melee(meleeTargets);
-      for (const { target, damage } of hits) {
-        // Record damage in the stats tracker so rewards are counted.
-        this.stats.recordPlayerDamage(target, damage);
-        const hitPos = target.mesh.position.clone();
-        if (target.health <= 0) {
-          this.killFeed.addMessage(
-            activeSoldier.name || 'Player',
-            target.name || 'Enemy'
-          );
-          if (target instanceof Soldier) {
-            // Melee killed an AI soldier — use t029 killSoldier for mesh removal
-            // and round-end check; remove from AIController tracking too.
-            this.teams.killSoldier(target);
-            this.aiController.removeSoldier(target);
-          } else {
-            // Melee killed a tank
-            this.stats.recordTankKilled(target, true);
-            this.teams.killTank(target);
-          }
-          this.particles.emitExplosion(hitPos, { count: 25, speed: 8 });
-        } else {
-          // Small impact burst for a non-lethal melee hit.
-          this.particles.emitExplosion(hitPos, { count: 8, speed: 4, lifetime: 0.3 });
-        }
+      this._processMeleeHits(activeSoldier, hits);
+    }
+
+    // ---- Melee weapon ability — Dash Strike (t033) ----
+    // Q key activates the equipped melee weapon's special ability.
+    if (activeSoldier && input.ability && activeSoldier.canActivateMeleeAbility()) {
+      // Include AI soldiers as ability targets (same set as regular melee).
+      const aiSoldiersAbility = this.aiController.getActiveSoldiers()
+        .filter(s => s.teamId === 1 && s.health > 0);
+      const abilityTargets = [...this.teams.getEnemyTanks(), ...aiSoldiersAbility];
+      const abilityHits = activeSoldier.activateMeleeAbility(abilityTargets);
+
+      // Snap the soldier's Y to terrain after the lunge repositions them.
+      const soldierPos = activeSoldier.mesh.position;
+      soldierPos.y = this.terrain.getHeightAt(soldierPos.x, soldierPos.z);
+
+      this._processMeleeHits(activeSoldier, abilityHits);
+
+      // Particle burst at landing position to signal the ability fired.
+      if (abilityHits.length === 0) {
+        this.particles.emitExplosion(soldierPos.clone(), { count: 12, speed: 6, lifetime: 0.4 });
       }
     }
 
@@ -639,6 +636,41 @@ export class Game {
         this.aiController.removeSoldier(soldier);
         this.particles.emitExplosion(deathPos, { count: 10, speed: 5, lifetime: 0.5 });
         console.info('[Game] AI soldier destroyed.');
+      }
+    }
+  }
+
+  /**
+   * Apply a batch of melee hit results: record stats, emit particles, kill tanks.
+   * Shared by the regular melee swing and the Dash Strike ability (t033).
+   *
+   * @param {import('../entities/Soldier.js').Soldier} attacker
+   * @param {Array<{target: object, damage: number}>} hits
+   * @private
+   */
+  _processMeleeHits(attacker, hits) {
+    for (const { target, damage } of hits) {
+      this.stats.recordPlayerDamage(target, damage);
+      const hitPos = target.mesh.position.clone();
+      if (target.health <= 0) {
+        this.killFeed.addMessage(
+          attacker.name || 'Player',
+          target.name || 'Enemy'
+        );
+        if (target instanceof Soldier) {
+          // Melee killed an AI soldier — use killSoldier for mesh removal and
+          // round-end check; remove from AIController tracking too.
+          this.teams.killSoldier(target);
+          this.aiController.removeSoldier(target);
+        } else {
+          // Melee killed a tank.
+          this.stats.recordTankKilled(target, true);
+          this.teams.killTank(target);
+        }
+        this.particles.emitExplosion(hitPos, { count: 25, speed: 8 });
+      } else {
+        // Small impact burst for a non-lethal hit.
+        this.particles.emitExplosion(hitPos, { count: 8, speed: 4, lifetime: 0.3 });
       }
     }
   }

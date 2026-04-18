@@ -15,9 +15,11 @@ export class InputSystem {
     // Touch joystick state
     this._joystick = { active: false, id: null, startX: 0, startY: 0, dx: 0, dy: 0 };
     this._aimTouch = { active: false, id: null, x: 0, y: 0 };
-    this._fireRequested   = false;
-    this._meleeRequested  = false;
-    this._reloadRequested = false;
+    this._fireRequested    = false;
+    this._meleeRequested   = false;
+    this._reloadRequested  = false;
+    /** One-shot: Q key activates the equipped weapon's special ability (t033). */
+    this._abilityRequested = false;
     this._turretAngle = null;
     /** One-shot: true on the frame E is pressed (exit/enter vehicle). */
     this._exitVehicleRequested = false;
@@ -39,6 +41,8 @@ export class InputSystem {
       if (e.code === 'KeyF') this._meleeRequested = true;
       // R key — manual reload for on-foot gun (t030)
       if (e.code === 'KeyR') this._reloadRequested = true;
+      // Q key — activate melee/weapon ability (dashStrike for energyBlade, t033)
+      if (e.code === 'KeyQ') this._abilityRequested = true;
       // Prevent Tab from shifting browser focus while held for the scoreboard
       if (e.code === 'Tab') e.preventDefault();
     });
@@ -161,6 +165,8 @@ export class InputSystem {
       melee: this._meleeRequested,
       /** One-shot: R key triggers a manual reload for the on-foot gun (t030). */
       reload: this._reloadRequested,
+      /** One-shot: Q key triggers the equipped melee weapon's special ability (t033). */
+      ability: this._abilityRequested,
       turretAngle: this._turretAngle,
       /** true while Tab is held — shows/hides the scoreboard overlay */
       tabHeld: !!this._keys['Tab'],
@@ -172,6 +178,7 @@ export class InputSystem {
     this._fireRequested        = false;
     this._meleeRequested       = false;
     this._reloadRequested      = false;
+    this._abilityRequested     = false;
     this._exitVehicleRequested = false;
 
     return state;
