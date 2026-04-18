@@ -293,17 +293,20 @@ export class PlayerController {
 
   /** @private */
   _updateTankMode(input, dt) {
-    const MOVE_SPEED = 12;
-    const TURN_SPEED = 2.5;
     const tank    = this.tank;
     const terrain = this.terrain;
 
+    // Use the tank's class-defined movement stats (set by Tank._applyClassDef).
+    // speed is in world-units/second; turnRate is in radians/second.
+    const moveSpeed = tank.speed;
+    const turnSpeed = tank.turnRate;
+
     const moving = input.forward || input.backward;
 
-    if (input.forward)  tank.mesh.translateZ(-MOVE_SPEED * dt);
-    if (input.backward) tank.mesh.translateZ(MOVE_SPEED * 0.6 * dt);
-    if (input.left)     tank.mesh.rotation.y += TURN_SPEED * dt;
-    if (input.right)    tank.mesh.rotation.y -= TURN_SPEED * dt;
+    if (input.forward)  tank.mesh.translateZ(-moveSpeed * dt);
+    if (input.backward) tank.mesh.translateZ(moveSpeed * 0.6 * dt);
+    if (input.left)     tank.mesh.rotation.y += turnSpeed * dt;
+    if (input.right)    tank.mesh.rotation.y -= turnSpeed * dt;
 
     if (input.turretAngle !== null) {
       tank.setTurretAngle(input.turretAngle);

@@ -42,18 +42,24 @@ import { Soldier } from '../entities/Soldier.js';
 // Tank AI tuneable constants
 // -------------------------------------------------------------------------
 
-/** Distance at which an AI tank begins tracking a target. */
-const AGGRO_RANGE = 60;
+/**
+ * AI advances until within (tank.range * FIRE_RANGE_FRACTION) of the target,
+ * then stops and fires.  Calibrated so standard-class tanks stop at ~28 u.
+ */
+const FIRE_RANGE_FRACTION = 0.35;
 
-/** AI advances until within FIRE_RANGE * FIRE_STOP_FACTOR of the target. */
-const FIRE_RANGE = 28;
+/** Minimum fire range so tanks don't refuse to engage at very short class range. */
+const FIRE_RANGE_MIN = 10;
+
+/** Stop distance as a fraction of the computed fire range. */
 const FIRE_STOP_FACTOR = 0.75;
 
-/** Movement speed (units/s) while advancing. */
-const MOVE_SPEED = 7;
-
-/** Maximum rotation rate (rad/s) of the tank hull while turning toward target. */
-const TURN_SPEED = 1.8;
+/**
+ * Aggro range (begin tracking) is 75 % of the tank's max range, clamped
+ * to a minimum of 30 u so even short-range classes (FlameTank) will hunt.
+ */
+const AGGRO_RANGE_FRACTION = 0.75;
+const AGGRO_RANGE_MIN = 30;
 
 /** Arena boundary (XZ). Tanks are clamped within ±ARENA_BOUND. */
 const ARENA_BOUND = 90;
@@ -206,10 +212,10 @@ export class AIController {
 
     for (let i = startSlot; i < team.slots.length; i++) {
       const tank = team.slots[i].tank;
-      // Re-derive from the default base HP (100) so re-applying after a
-      // league change doesn't compound multipliers.
-      const BASE_HP = 100;
-      tank.maxHealth = Math.round(BASE_HP * hpMultiplier);
+      // Re-derive from tank.baseHp (class-specific base HP from TankDefs) so
+      // re-applying after a league change doesn't compound multipliers.
+      // tank.baseHp is set by Tank._applyClassDef() for all class types.
+      tank.maxHealth = Math.round(tank.baseHp * hpMultiplier);
       tank.health = tank.maxHealth;
       tank.damageMultiplier = damageMultiplier;
     }
@@ -392,8 +398,10 @@ export class AIController {
       const state = this._getTankState(tank);
 
       // No target or target out of aggro range: reset reaction timer and idle.
+      // Aggro range is per-tank so classes with longer range begin tracking earlier.
       const dist = target ? tank.mesh.position.distanceTo(target.mesh.position) : Infinity;
-      if (!target || dist > AGGRO_RANGE) {
+      const aggroRange = Math.max(AGGRO_RANGE_MIN, tank.range * AGGRO_RANGE_FRACTION);
+      if (!target || dist > aggroRange) {
         state.reactionTimer = 0;
         state.lastTargetUuid = null;
         continue;
@@ -481,6 +489,21 @@ export class AIController {
     const accuracy = isEnemyTeam ? this._scaling.aimAccuracy : ALLY_ACCURACY;
     const reactionTime = isEnemyTeam ? this._scaling.reactionTime : ALLY_REACTION_TIME;
 
+    // --- Per-class movement stats ---
+    // tank.speed and tank.turnRate are set by Tank._applyClassDef from TankDefs.
+    const moveSpeed = tank.speed;
+    const turnSpeed = tank.turnRate;
+
+    // --- Per-class fire and aggro ranges ---
+    // fireRange scales with the tank's effective range stat so Artillery AI
+    // engages from far away while FlameTank AI closes to near-melee distance.
+    const fireRange = Math.max(FIRE_RANGE_MIN, tank.range * FIRE_RANGE_FRACTION);
+    const stopDist  = fireRange * FIRE_STOP_FACTOR;
+    const aggroRange = Math.max(AGGRO_RANGE_MIN, tank.range * AGGRO_RANGE_FRACTION);
+
+    // Early-out if target slipped outside aggro range since _updateTeamAI checked.
+    if (dist > aggroRange) return;
+
     // --- Rotate hull toward target ---
     const targetAngle = Math.atan2(
       targetPos.x - pos.x,
@@ -491,12 +514,11 @@ export class AIController {
     // Normalize to [-π, π]
     while (diff > Math.PI) diff -= Math.PI * 2;
     while (diff < -Math.PI) diff += Math.PI * 2;
-    tank.mesh.rotation.y += Math.sign(diff) * Math.min(Math.abs(diff), TURN_SPEED * dt);
+    tank.mesh.rotation.y += Math.sign(diff) * Math.min(Math.abs(diff), turnSpeed * dt);
 
     // --- Advance if outside preferred fire distance ---
-    const stopDist = FIRE_RANGE * FIRE_STOP_FACTOR;
     if (dist > stopDist) {
-      tank.mesh.translateZ(-MOVE_SPEED * dt);
+      tank.mesh.translateZ(-moveSpeed * dt);
     }
 
     // --- Keep on terrain ---
@@ -514,7 +536,7 @@ export class AIController {
 
     // --- Fire when in range and reaction time has elapsed ---
     const reacted = reactionTimer >= reactionTime;
-    if (dist < FIRE_RANGE && tank.canFire() && reacted) {
+    if (dist < fireRange && tank.canFire() && reacted) {
       const projectile = tank.fire();
       if (projectile) {
         this.projectiles.add(projectile);
