@@ -14,6 +14,7 @@ import { LoadoutScreen } from '../ui/LoadoutScreen.js';
 import { ShopMenu } from '../ui/ShopMenu.js';
 import { CameraController } from '../systems/CameraController.js';
 import { TeamManager } from './TeamManager.js';
+import { PlayerController } from './PlayerController.js';
 import { AIController } from '../systems/AIController.js';
 import { MatchManager } from './MatchManager.js';
 import { StatsTracker } from '../systems/StatsTracker.js';
@@ -32,16 +33,6 @@ export class Game {
 
     /** @type {{tank: string, gun: string, melee: string}|null} */
     this.currentLoadout = null;
-
-    /**
-     * Active player-controlled Soldier instance, or null when the player is in
-     * tank mode.  Set to a Soldier by PlayerController (t025) when the player
-     * bails out of their tank.  The melee handling in _updatePlayer() reads
-     * this field each frame so it activates automatically when t025 sets it.
-     *
-     * @type {import('../entities/Soldier.js').Soldier|null}
-     */
-    this.playerSoldier = null;
 
     this._initRenderer();
     this._initScene();
@@ -96,11 +87,21 @@ export class Game {
     // this.player is a convenience alias to teams[0].slots[0].tank.
     this.teams = new TeamManager(this.scene, this.terrain);
     this.player = this.teams.player;
+
+    // PlayerController manages tank vs. on-foot soldier mode for the human player.
+    // It exposes a `mesh` getter so CameraController always follows the active entity.
+    this.playerController = new PlayerController({
+      tank:    this.player,
+      scene:   this.scene,
+      terrain: this.terrain,
+    });
   }
 
   _initSystems() {
     this.input = new InputSystem(this.canvas);
-    this.cameraController = new CameraController(this.camera, this.player);
+    // CameraController uses target.mesh; PlayerController exposes that getter
+    // so the camera follows whichever entity the player is currently controlling.
+    this.cameraController = new CameraController(this.camera, this.playerController);
     this.projectiles = new ProjectileSystem(this.scene);
     this.particles = new ParticleSystem(this.scene);
     // TreeSystem spawns tree entities with HP; CollisionSystem handles shell hits
@@ -225,6 +226,8 @@ export class Game {
         // Clear per-tank AI reaction timers so enemies don't carry over mid-fire
         // state from the previous round.
         this.aiController.reset();
+        // Reset PlayerController to tank mode (removes any active soldier mesh).
+        this.playerController.reset();
         this._playerDustTimer = 0;
         this._enemyDustTimer = 0;
       })
@@ -353,8 +356,13 @@ export class Game {
 
     // Gate all combat logic on an active round.
     if (this.match.isActive()) {
-      // Player input
+      // Player input — PlayerController delegates to tank or soldier depending on mode.
       this._updatePlayer(input, dt);
+
+      // Check for soldier taking enemy projectile damage (when player is on foot).
+      if (this.playerController.mode === 'soldier' && this.playerController.soldier) {
+        this._checkSoldierHit();
+      }
 
       // AIController: drives all ally (team 0, slots 1-5) and enemy AI tanks
       this.aiController.update(dt);
@@ -385,13 +393,14 @@ export class Game {
     this.particles.update(dt);
     this.cameraController.update(dt);
 
-    // HUD — pass live round stats for the counters
+    // HUD — pass live round stats for the counters.
+    // Use playerController so values reflect the active entity (tank or soldier).
     const roundStats = this.stats.getCurrentRoundStats();
     this.hud.update({
-      score: this.score,
-      health: this.player.health,
-      ammo: this.player.ammo,
-      stats: roundStats,
+      score:  this.score,
+      health: this.playerController.health,
+      ammo:   this.playerController.ammo,
+      stats:  roundStats,
     });
 
     // Scoreboard: show when Tab is held
@@ -401,49 +410,32 @@ export class Game {
   }
 
   /**
-   * @param {ReturnType<import('../systems/InputSystem.js').InputSystem['getState']>} input — pre-fetched this frame
+   * Delegate player input to PlayerController, which handles movement,
+   * mode switching (E key), and firing for whichever entity is active.
+   *
+   * @param {ReturnType<import('../systems/InputSystem.js').InputSystem['getState']>} input
    * @param {number} dt
    */
   _updatePlayer(input, dt) {
-    const moveSpeed = 12;
-    const turnSpeed = 2.5;
+    const { newProjectile, isMoving } = this.playerController.update(input, dt);
 
-    if (input.forward) {
-      this.player.mesh.translateZ(-moveSpeed * dt);
-    }
-    if (input.backward) {
-      this.player.mesh.translateZ(moveSpeed * 0.6 * dt);
-    }
-    if (input.left) {
-      this.player.mesh.rotation.y += turnSpeed * dt;
-    }
-    if (input.right) {
-      this.player.mesh.rotation.y -= turnSpeed * dt;
-    }
-
-    if (input.turretAngle !== null) {
-      this.player.setTurretAngle(input.turretAngle);
-    }
-
-    if (input.fire && this.player.canFire()) {
-      const projectile = this.player.fire();
-      if (projectile) {
-        this.projectiles.add(projectile);
-        const flashDir = projectile.velocity.clone().normalize();
-        this.particles.emitMuzzleFlash(
-          projectile.mesh.position.clone(),
-          flashDir
-        );
-      }
+    if (newProjectile) {
+      this.projectiles.add(newProjectile);
+      const flashDir = newProjectile.velocity.clone().normalize();
+      this.particles.emitMuzzleFlash(
+        newProjectile.mesh.position.clone(),
+        flashDir
+      );
     }
 
     // ---- On-foot soldier melee (t026) ----
-    // Activated when PlayerController (t025) sets this.playerSoldier.
-    if (this.playerSoldier && input.melee) {
-      // Build the list of valid melee targets: all living enemy tanks + living
-      // enemy soldiers (the latter added when t028/t029 introduce AI soldiers).
+    // playerController.soldier is set by PlayerController (t025) when on foot.
+    const activeSoldier = this.playerController.soldier;
+    if (activeSoldier && input.melee) {
+      // Build the list of valid melee targets: all living enemy tanks.
+      // Living enemy soldiers are added here when t028/t029 introduce AI soldiers.
       const meleeTargets = [...this.teams.getEnemyTanks()];
-      const hits = this.playerSoldier.melee(meleeTargets);
+      const hits = activeSoldier.melee(meleeTargets);
       for (const { target, damage } of hits) {
         // Record damage in the stats tracker so rewards are counted.
         this.stats.recordPlayerDamage(target, damage);
@@ -451,7 +443,7 @@ export class Game {
         if (target.health <= 0) {
           this.stats.recordTankKilled(target, true);
           this.killFeed.addMessage(
-            this.playerSoldier.name || 'Player',
+            activeSoldier.name || 'Player',
             target.name || 'Enemy'
           );
           this.teams.killTank(target);
@@ -463,37 +455,96 @@ export class Game {
       }
     }
 
-    // Keep on terrain
-    const pos = this.player.mesh.position;
-    pos.y = this.terrain.getHeightAt(pos.x, pos.z);
-
-    // Clamp to arena
-    const bound = 90;
-    pos.x = THREE.MathUtils.clamp(pos.x, -bound, bound);
-    pos.z = THREE.MathUtils.clamp(pos.z, -bound, bound);
-
-    // Dust trail while moving
+    // Dust trail while the active entity is moving
     this._playerDustTimer -= dt;
-    if (this._playerDustTimer <= 0 && (input.forward || input.backward)) {
+    if (this._playerDustTimer <= 0 && isMoving) {
       this._playerDustTimer = 0.15;
-      this.particles.emitDust(this.player.mesh.position);
+      this.particles.emitDust(this.playerController.mesh.position);
     }
   }
 
   /**
    * Called by CollisionSystem when the player's tank HP reaches 0.
-   * Marks the player's slot dead in TeamManager so `isTeamEliminated(0)` can
-   * fire, removing the mesh from the scene and triggering the MatchManager
-   * round-end / match-end flow if all allies are also gone.
+   *
+   * If the player is still in the tank (tank mode):
+   *   - Remove tank mesh and spawn a wreck.
+   *   - Spawn a soldier at the tank's last position (auto-bail).
+   *   - Player slot stays alive in TeamManager until the soldier also dies.
+   *
+   * If the player already exited the tank voluntarily (soldier mode):
+   *   - The idle tank was destroyed by enemies — remove it and spawn a wreck.
+   *   - Player continues on foot; re-entry is no longer possible.
    */
   _onPlayerTankDestroyed() {
-    // Notify StatsTracker to stop the survival timer for this round.
-    this.stats.recordPlayerDeath();
-    // Mark player dead in TeamManager: removes mesh, checks team elimination.
-    // Without this call the player's slot stays alive=true and the team can
-    // never be eliminated, stalling the round indefinitely.
+    // Capture last-known position and rotation before removing the mesh.
+    const tankPos  = this.player.mesh.position.clone();
+    const tankRotY = this.player.mesh.rotation.y;
+
+    // Remove the tank mesh from the scene (kills its presence without
+    // calling TeamManager.killTank() so the player slot stays alive).
+    this.scene.remove(this.player.mesh);
+    // Spawn a wreck prop at the tank's last position.
+    this.wrecks.add(tankPos, tankRotY);
+
+    if (this.playerController.mode === 'soldier') {
+      // Player was already on foot — idle tank was destroyed by enemies.
+      // Update PlayerController state so re-entry prompt is hidden.
+      this.playerController.notifyTankDestroyedWhileIdle();
+      console.info('[Game] Idle player tank destroyed; player continues on foot.');
+    } else {
+      // Player was in the tank — auto-bail.
+      this.stats.recordPlayerDeath();
+      this.playerController.bailOut(tankPos);
+      console.info('[Game] Player tank destroyed — auto-bailed as soldier.');
+    }
+  }
+
+  /**
+   * Called when the player's on-foot soldier HP reaches 0.
+   * Removes the soldier from the scene, then finalises the player's
+   * slot as dead in TeamManager (triggering round-end if the team is wiped).
+   */
+  _onPlayerSoldierDestroyed() {
+    const soldierPos = this.playerController.soldier.mesh.position.clone();
+    this.particles.emitExplosion(soldierPos, { count: 10, speed: 5, lifetime: 0.5 });
+    this.playerController.clearSoldier();
+
+    // Now mark the player's slot dead — this may trigger team elimination.
     this.teams.killTank(this.player);
-    console.info('[Game] Player tank destroyed.');
+    console.info('[Game] Player soldier destroyed — player is out for this round.');
+  }
+
+  /**
+   * Check whether any enemy projectile has hit the player's on-foot soldier.
+   * Called each frame while playerController.mode === 'soldier'.
+   *
+   * Hit radius (1.2 units) is tighter than the tank radius (2.5 units) to
+   * reflect the soldier's smaller capsule silhouette.
+   */
+  _checkSoldierHit() {
+    const soldier = this.playerController.soldier;
+    const projectiles = this.projectiles.active;
+    const HIT_RADIUS = 1.2;
+
+    for (let i = projectiles.length - 1; i >= 0; i--) {
+      const p = projectiles[i];
+      if (p.isPlayerOwned) continue; // friendly bullets skip the player
+
+      const dist = p.mesh.position.distanceTo(soldier.mesh.position);
+      if (dist < HIT_RADIUS) {
+        const hitPos = p.mesh.position.clone();
+        const actualDamage = Math.min(p.damage, soldier.health);
+        if (p.ownerTank) p.ownerTank.recordDamage(actualDamage);
+        soldier.takeDamage(p.damage);
+        this.projectiles.remove(i);
+        this.particles.emitExplosion(hitPos, { count: 6, speed: 3, lifetime: 0.3 });
+
+        if (soldier.health <= 0) {
+          this._onPlayerSoldierDestroyed();
+          break; // soldier removed; stop checking more projectiles this frame
+        }
+      }
+    }
   }
 
   /**
@@ -530,6 +581,8 @@ export class Game {
       this.match.reset();
       // Reset StatsTracker for the new match
       this.stats.reset();
+      // Reset PlayerController to tank mode (clears any active soldier mesh)
+      this.playerController.reset();
       // Reset field entities
       this.teams.reset();
       this.projectiles.reset();

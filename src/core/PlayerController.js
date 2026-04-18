@@ -1,0 +1,303 @@
+import * as THREE from 'three';
+import { Soldier } from '../entities/Soldier.js';
+
+/**
+ * Distance (units) within which the on-foot soldier can re-enter the idle tank.
+ * Roughly the tank hull length (4.5) plus a comfortable step-in margin.
+ */
+const RE_ENTER_DIST = 6;
+
+/** Arena bound: matches Game.js clamp value. */
+const ARENA_BOUND = 90;
+
+/**
+ * PlayerController — manages the player's mode (tank vs. on-foot soldier).
+ *
+ * Modes
+ * -----
+ *  'tank'    — player directly controls this.tank (default).
+ *  'soldier' — player's tank is idle or destroyed; player controls this.soldier.
+ *
+ * Transitions
+ * -----------
+ *  Voluntary exit  (E key in tank mode)    : soldier spawns beside tank; tank idles.
+ *  Auto-bail       (tank destroyed by foe) : soldier spawns at tank's last position.
+ *  Re-enter tank   (E key near idle tank)  : soldier despawns; tank control resumes.
+ *
+ * Interface compatibility
+ * -----------------------
+ *  CameraController uses target.mesh — the `mesh` getter always returns the
+ *  active entity's mesh so the camera follows the right entity.
+ *  HUD uses health/maxHealth/ammo — these getters delegate to the active entity.
+ */
+export class PlayerController {
+  /**
+   * @param {object}  opts
+   * @param {import('../entities/Tank.js').Tank}       opts.tank    — player tank entity
+   * @param {THREE.Scene}                              opts.scene
+   * @param {import('../entities/Terrain.js').Terrain} opts.terrain
+   */
+  constructor({ tank, scene, terrain }) {
+    this.tank    = tank;
+    this.soldier = null;     // Soldier entity when on foot, null otherwise
+    this.scene   = scene;
+    this.terrain = terrain;
+
+    /** @type {'tank' | 'soldier'} */
+    this.mode = 'tank';
+
+    /**
+     * True when the player voluntarily exited the tank and the tank is still
+     * alive/idle in the scene, making re-entry possible.
+     * Set to false when the tank is destroyed (bailed out or destroyed while idle).
+     * @type {boolean}
+     */
+    this._tankIdle = false;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Accessors — CameraController / HUD compatibility
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The active entity's mesh. CameraController binds to `target.mesh`.
+   * @returns {THREE.Group}
+   */
+  get mesh() {
+    return this.mode === 'tank' ? this.tank.mesh : this.soldier.mesh;
+  }
+
+  /** Current HP shown in the HUD. */
+  get health() {
+    return this.mode === 'tank' ? this.tank.health : this.soldier.health;
+  }
+
+  /** Maximum HP shown in the HUD. */
+  get maxHealth() {
+    return this.mode === 'tank' ? this.tank.maxHealth : this.soldier.maxHealth;
+  }
+
+  /**
+   * Current ammo shown in the HUD.
+   * null when on foot — soldiers have effectively unlimited ammo (no clip mechanic yet).
+   * @returns {number|null}
+   */
+  get ammo() {
+    return this.mode === 'tank' ? this.tank.ammo : null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Mode transitions
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Voluntary exit: player presses E while in tank mode.
+   * Spawns a soldier 4 units to the right of the tank hull.
+   * Tank remains idle in the scene and can be re-entered.
+   */
+  exitTank() {
+    if (this.mode !== 'tank') return;
+
+    const tankPos  = this.tank.mesh.position;
+    const tankRotY = this.tank.mesh.rotation.y;
+
+    // Offset 4 units to the hull's local +X (right side)
+    const offset = new THREE.Vector3(4, 0, 0);
+    offset.applyEuler(new THREE.Euler(0, tankRotY, 0));
+    const spawnPos = tankPos.clone().add(offset);
+
+    this._spawnSoldierAt(spawnPos, tankRotY);
+    this._tankIdle = true;
+    this.mode = 'soldier';
+
+    console.info('[PlayerController] Voluntarily exited tank (E key).');
+  }
+
+  /**
+   * Forced bail-out: the player's tank was destroyed.
+   * Called by Game._onPlayerTankDestroyed() with the tank's last position.
+   * The caller is responsible for removing the tank mesh and spawning a wreck.
+   *
+   * @param {THREE.Vector3} tankPos — snapshot taken before mesh removal
+   */
+  bailOut(tankPos) {
+    if (this.soldier !== null) return; // already on foot
+
+    this._spawnSoldierAt(tankPos.clone(), this.tank.mesh.rotation.y);
+    this._tankIdle = false; // tank is destroyed — re-entry not possible
+    this.mode = 'soldier';
+
+    console.info('[PlayerController] Auto-bailed from destroyed tank.');
+  }
+
+  /**
+   * Attempt to re-enter the idle tank (E key while on foot).
+   * Succeeds only when:
+   *   - Mode is 'soldier'.
+   *   - `_tankIdle` is true (tank was voluntarily vacated, not destroyed).
+   *   - Soldier is within RE_ENTER_DIST units of the tank.
+   *
+   * @returns {boolean} True if re-entry succeeded.
+   */
+  tryEnterTank() {
+    if (this.mode !== 'soldier' || !this._tankIdle || !this.soldier) return false;
+
+    const dist = this.soldier.mesh.position.distanceTo(this.tank.mesh.position);
+    if (dist > RE_ENTER_DIST) return false;
+
+    this.scene.remove(this.soldier.mesh);
+    this.soldier = null;
+    this._tankIdle = false;
+    this.mode = 'tank';
+
+    console.info('[PlayerController] Re-entered tank.');
+    return true;
+  }
+
+  /**
+   * Remove the soldier from the scene (called on soldier death or round reset).
+   * Safe to call when no soldier is active.
+   */
+  clearSoldier() {
+    if (this.soldier) {
+      this.scene.remove(this.soldier.mesh);
+      this.soldier = null;
+    }
+  }
+
+  /**
+   * Called when the idle tank is destroyed by enemies while the player is on foot.
+   * Updates state so re-entry is no longer offered.
+   * The caller (Game.js) handles mesh removal and wreck spawning.
+   */
+  notifyTankDestroyedWhileIdle() {
+    this._tankIdle = false;
+    console.info('[PlayerController] Idle tank was destroyed by enemies; re-entry no longer possible.');
+  }
+
+  /**
+   * Reset to tank mode for a new round: remove any active soldier.
+   */
+  reset() {
+    this.clearSoldier();
+    this._tankIdle = false;
+    this.mode = 'tank';
+  }
+
+  // ---------------------------------------------------------------------------
+  // Per-frame update
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Process input and advance the active entity.
+   *
+   * @param {object} input — snapshot from InputSystem.getState()
+   * @param {number} dt    — seconds since last frame
+   * @returns {{ newProjectile: import('../entities/Projectile.js').Projectile|null,
+   *             isMoving: boolean }}
+   *   newProjectile — projectile to add to ProjectileSystem (null if none fired).
+   *   isMoving      — true if the active entity moved this frame (for dust trails).
+   */
+  update(input, dt) {
+    if (this.mode === 'tank') {
+      return this._updateTankMode(input, dt);
+    }
+    return this._updateSoldierMode(input, dt);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private — tank mode
+  // ---------------------------------------------------------------------------
+
+  /** @private */
+  _updateTankMode(input, dt) {
+    const MOVE_SPEED = 12;
+    const TURN_SPEED = 2.5;
+    const tank    = this.tank;
+    const terrain = this.terrain;
+
+    const moving = input.forward || input.backward;
+
+    if (input.forward)  tank.mesh.translateZ(-MOVE_SPEED * dt);
+    if (input.backward) tank.mesh.translateZ(MOVE_SPEED * 0.6 * dt);
+    if (input.left)     tank.mesh.rotation.y += TURN_SPEED * dt;
+    if (input.right)    tank.mesh.rotation.y -= TURN_SPEED * dt;
+
+    if (input.turretAngle !== null) {
+      tank.setTurretAngle(input.turretAngle);
+    }
+
+    // Terrain follow + arena clamp
+    const pos = tank.mesh.position;
+    pos.y = terrain.getHeightAt(pos.x, pos.z);
+    pos.x = THREE.MathUtils.clamp(pos.x, -ARENA_BOUND, ARENA_BOUND);
+    pos.z = THREE.MathUtils.clamp(pos.z, -ARENA_BOUND, ARENA_BOUND);
+
+    // E key — voluntary exit
+    if (input.exitVehicle) {
+      this.exitTank();
+    }
+
+    let newProjectile = null;
+    if (input.fire && tank.canFire()) {
+      newProjectile = tank.fire();
+    }
+
+    return { newProjectile, isMoving: moving };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private — soldier mode
+  // ---------------------------------------------------------------------------
+
+  /** @private */
+  _updateSoldierMode(input, dt) {
+    const soldier = this.soldier;
+    const terrain = this.terrain;
+
+    const moving = input.forward || input.backward;
+
+    if (input.forward)  soldier.mesh.translateZ(-soldier.moveSpeed * dt);
+    if (input.backward) soldier.mesh.translateZ(soldier.moveSpeed * 0.6 * dt);
+    if (input.left)     soldier.mesh.rotation.y += soldier.turnSpeed * dt;
+    if (input.right)    soldier.mesh.rotation.y -= soldier.turnSpeed * dt;
+
+    // Terrain follow + arena clamp
+    const pos = soldier.mesh.position;
+    pos.y = terrain.getHeightAt(pos.x, pos.z);
+    pos.x = THREE.MathUtils.clamp(pos.x, -ARENA_BOUND, ARENA_BOUND);
+    pos.z = THREE.MathUtils.clamp(pos.z, -ARENA_BOUND, ARENA_BOUND);
+
+    soldier.update(dt);
+
+    // E key — try to re-enter idle tank
+    if (input.exitVehicle) {
+      this.tryEnterTank();
+    }
+
+    let newProjectile = null;
+    if (input.fire && soldier.canFire()) {
+      newProjectile = soldier.fire();
+    }
+
+    return { newProjectile, isMoving: moving };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private — helpers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Instantiate and place a Soldier at the given world position.
+   * @private
+   * @param {THREE.Vector3} pos
+   * @param {number}        rotY — initial world-space Y rotation (radians)
+   */
+  _spawnSoldierAt(pos, rotY) {
+    const y = this.terrain.getHeightAt(pos.x, pos.z);
+    this.soldier = new Soldier({ isPlayer: true, teamId: 0, name: 'Player' });
+    this.soldier.mesh.position.set(pos.x, y, pos.z);
+    this.soldier.mesh.rotation.y = rotY;
+    this.scene.add(this.soldier.mesh);
+  }
+}
