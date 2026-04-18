@@ -720,17 +720,31 @@ export class AIController {
 
     // --- Fire when in range and reaction time has elapsed ---
     const reacted = reactionTimer >= reactionTime;
-    if (dist < fireRange && tank.canFire() && reacted) {
-      const projectile = tank.fire();
-      if (projectile) {
-        this.projectiles.add(projectile);
-        const flashDir = projectile.velocity.clone().normalize();
-        this.particles.emitMuzzleFlash(
-          projectile.mesh.position.clone(),
-          flashDir
-        );
-        // Notify the sound system (if registered) so AI cannon fire is audible.
-        if (this._onShot) this._onShot(tank, projectile);
+    if (dist < fireRange && reacted) {
+      if (tank.isFlamethrower) {
+        // Flame Tank: enable continuous cone damage via FlameSystem.
+        // The turret already faces the target (aim step above), so the
+        // muzzle forward direction used by FlameSystem will naturally sweep
+        // the enemy.  No discrete projectile is created.
+        tank.flameActive = true;
+      } else if (tank.canFire()) {
+        tank.flameActive = false;
+        const projectile = tank.fire();
+        if (projectile) {
+          this.projectiles.add(projectile);
+          const flashDir = projectile.velocity.clone().normalize();
+          this.particles.emitMuzzleFlash(
+            projectile.mesh.position.clone(),
+            flashDir
+          );
+          // Notify the sound system (if registered) so AI cannon fire is audible.
+          if (this._onShot) this._onShot(tank, projectile);
+        }
+      }
+    } else {
+      // Out of fire range — stop flaming.
+      if (tank.isFlamethrower) {
+        tank.flameActive = false;
       }
     }
   }

@@ -31,6 +31,7 @@ import { getLeagueDef } from '../data/LeagueDefs.js';
 import { SoundSystem } from '../systems/SoundSystem.js';
 import { MapLayout } from '../systems/MapLayout.js';
 import { TankAbilityEffects } from '../systems/TankAbilityEffects.js';
+import { FlameSystem } from '../systems/FlameSystem.js';
 import { getTankDef } from '../data/TankDefs.js';
 import { GunDefs, MeleeDefs } from '../data/WeaponDefs.js';
 import { Projectile } from '../entities/Projectile.js';
@@ -296,6 +297,7 @@ export class Game {
         // Clear mid-round objects between rounds.
         this.projectiles.reset();
         this.particles.reset();
+        this.flameSystem.reset();
         this.wrecks.reset();
         // Respawn the destructible tree set so the field is full again next round.
         this.trees.reset();
@@ -405,6 +407,11 @@ export class Game {
       particles:        this.particles,
       projectileSystem: this.projectiles,
     });
+
+    // FlameSystem (t039): continuous cone damage + fire particles for Flame Tanks.
+    // Processes all flame tanks (player and AI) each frame; returns damage events
+    // that Game.js resolves into kills, kill-feed messages, and stats.
+    this.flameSystem = new FlameSystem();
 
     // AbilityBar (t045): two SVG radial-cooldown icons, bottom-centre HUD.
     // Reads state from this.abilitySystem each frame via AbilitySystem getters.
@@ -545,6 +552,11 @@ export class Game {
 
       // AIController: drives all ally (team 0, slots 1-5) and enemy AI tanks
       this.aiController.update(dt);
+
+      // FlameSystem (t039): apply continuous cone damage + fire particles for
+      // all active flame tanks (player and AI).  Must run AFTER aiController.update
+      // (which sets tank.flameActive) and AFTER _updatePlayer (same reason).
+      this._updateFlamethrowers(dt);
 
       // AI soldier behavior (t028): bailed enemy crew advance, take cover, shoot
       const playerSoldier = this.playerController.mode === 'soldier'
@@ -732,6 +744,122 @@ export class Game {
     if (this._playerDustTimer <= 0 && isMoving) {
       this._playerDustTimer = 0.15;
       this.particles.emitDust(this.playerController.mesh.position);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Flame Tank system (t039)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Process continuous cone damage for all active flame tanks.
+   *
+   * Builds a flamer list from every living flameTank across both teams, then
+   * delegates to FlameSystem.update() which handles cone geometry, tick timing,
+   * particle emission, and damage application.  The returned damage events are
+   * processed here for kill-feed messages, stats, wreck spawning, and score.
+   *
+   * Enemy flame tanks can also damage the player tank; player death detection
+   * mirrors the projectile path in CollisionSystem.
+   *
+   * @param {number} dt
+   * @private
+   */
+  _updateFlamethrowers(dt) {
+    const flamers = [];
+
+    // Collect all living flame tanks with their target lists.
+    for (const tank of this.teams.getAllLivingTanks()) {
+      if (!tank.isFlamethrower) continue;
+
+      let targets;
+      let isPlayerOwned;
+
+      if (tank.teamId === 0) {
+        // Player team flame tanks (player or ally AI) → target enemy tanks.
+        targets = this.teams.getEnemyTanks().filter(t => t.health > 0);
+        isPlayerOwned = true;
+      } else {
+        // Enemy flame tanks → target player tank (+ living ally tanks).
+        const allyTanks = this.teams.getAllyTanks().filter(t => t.health > 0);
+        const playerAlive = this.player.health > 0;
+        targets = playerAlive ? [this.player, ...allyTanks] : allyTanks;
+        isPlayerOwned = false;
+      }
+
+      flamers.push({ tank, targets, isPlayerOwned });
+    }
+
+    if (flamers.length === 0) return;
+
+    const events = this.flameSystem.update(dt, flamers, this.particles);
+
+    // Process each damage event: stats, kills, kill feed.
+    for (const { tank, target, damage, isPlayerOwned } of events) {
+      // Stat tracking for player-originated damage.
+      if (isPlayerOwned) {
+        this.stats.recordPlayerDamage(target, damage);
+      }
+
+      if (target.health > 0) {
+        // Non-lethal hit: small flame impact burst.
+        this.particles.emitExplosion(target.mesh.position.clone(),
+          { count: 6, speed: 4, lifetime: 0.35 });
+        continue;
+      }
+
+      // ── Target killed by flame ────────────────────────────────────────────
+      const killPos = target.mesh.position.clone();
+      const killerName = (tank === this.player || isPlayerOwned)
+        ? (tank.name || 'Player')
+        : (tank.name || 'Enemy');
+
+      if (target === this.player) {
+        // Enemy flame tank killed the player tank.
+        // Guard: player slot may already be dead if another event this frame
+        // already triggered _onPlayerTankDestroyed().
+        const playerSlotAlive = this.teams.teams[0].slots[0].alive;
+        if (!playerSlotAlive) continue;
+
+        tank.recordKill();
+        this.killFeed.addMessage(killerName, this.player.name || 'Player');
+        // _onPlayerTankDestroyed() handles mesh removal, wreck spawn, and
+        // bail-out logic — do not duplicate those steps here.
+        this._onPlayerTankDestroyed();
+      } else {
+        // Player/ally flame tank killed an enemy tank — or an enemy flame
+        // tank killed an ally AI tank.
+        // Guard: another event in the same batch may have already killed this tank.
+        if (!this.teams.teams[target.teamId]?.slots.find(
+          s => s.tank === target && s.alive
+        )) continue;
+
+        const byPlayer = isPlayerOwned;
+        if (byPlayer) {
+          tank.recordKill();
+          this.score += 100;
+        }
+
+        const tankData = {
+          position: killPos.clone(),
+          rotationY: target.mesh.rotation.y,
+        };
+
+        const victimName = target.name || 'Enemy';
+        this.killFeed.addMessage(killerName, victimName);
+
+        if (byPlayer) {
+          this.stats.recordTankKilled(target, true);
+        }
+
+        // Bail crew before killTank() removes the slot.
+        this._bailAITankAsSoldier(killPos, target.mesh.rotation.y, target.teamId);
+
+        this.teams.killTank(target);
+
+        this.particles.emitExplosion(killPos, { count: 35, speed: 10 });
+        this.wrecks.add(tankData.position, tankData.rotationY);
+      }
     }
   }
 

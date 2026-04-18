@@ -349,7 +349,12 @@ export class PlayerController {
     }
 
     const newProjectiles = [];
-    if (input.fire && tank.canFire()) {
+
+    if (tank.isFlamethrower) {
+      // Flame Tank: set the continuous-fire flag; FlameSystem (via Game.js)
+      // handles damage ticks and particle emission.  No discrete projectile.
+      tank.flameActive = !!(input.fire);
+    } else if (input.fire && tank.canFire()) {
       const proj = tank.fire();
       if (proj) newProjectiles.push(proj);
     }
