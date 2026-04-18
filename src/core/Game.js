@@ -27,6 +27,7 @@ import { SaveSystem } from '../systems/SaveSystem.js';
 import { LeagueSystem } from '../systems/LeagueSystem.js';
 import { LeagueDisplay } from '../ui/LeagueDisplay.js';
 import { getLeagueDef } from '../data/LeagueDefs.js';
+import { SoundSystem } from '../systems/SoundSystem.js';
 import { MapLayout } from '../systems/MapLayout.js';
 import { TankAbilityEffects } from '../systems/TankAbilityEffects.js';
 import { getTankDef } from '../data/TankDefs.js';
@@ -124,6 +125,12 @@ export class Game {
   }
 
   _initSystems() {
+    // SoundSystem (t056): Howler.js-based audio — must be created before any
+    // systems that may fire sound events during their own initialisation.
+    this.sound = new SoundSystem();
+    // Attach UI click sounds to all present and future DOM buttons globally.
+    this.sound.bindUIClicks();
+
     this.input = new InputSystem(this.canvas);
     // CameraController uses target.mesh; PlayerController exposes that getter
     // so the camera follows whichever entity the player is currently controlling.
@@ -147,6 +154,9 @@ export class Game {
     // Dust-emission timers
     this._playerDustTimer = 0;
     this._enemyDustTimer = 0;
+
+    /** Track whether the player was moving last frame to detect start/stop. */
+    this._playerWasMoving = false;
 
     /**
      * CollisionSystem compatibility adapter.
@@ -180,9 +190,13 @@ export class Game {
       .onPlayerDeath(() => this._onPlayerTankDestroyed())
       .onHit((pos) => {
         this.particles.emitExplosion(pos, { count: 15, speed: 6, lifetime: 0.6 });
+        // Play impact sound for non-lethal shell hits (t056).
+        this.sound.playImpact();
       })
       .onKill((pos, owner, tankData) => {
         this.particles.emitExplosion(pos, { count: 35, speed: 10 });
+        // Play explosion sound whenever any tank is destroyed (t056).
+        this.sound.playExplosion();
         // Leave a wreck at the tank's last position as indestructible cover
         if (tankData) {
           this.wrecks.add(tankData.position, tankData.rotationY);
@@ -218,6 +232,8 @@ export class Game {
         // Particle count scales with splash radius so bigger weapons feel bigger.
         const count = Math.round(25 + splashRadius * 3);
         this.particles.emitExplosion(pos, { count, speed: 10, lifetime: 1.0 });
+        // Explosive rounds also play the explosion sound (t056).
+        this.sound.playExplosion();
       })
       .onBuildingWallDestroyed((pos) => {
         // Medium debris burst when a wall panel is knocked down (t047/t048).
@@ -358,6 +374,13 @@ export class Game {
     // applyLeagueScalingToTeam() must be called once here; values persist through
     // round resets because Tank.reset() restores health to the (already-scaled) maxHealth.
     this.aiController.applyLeagueScalingToTeam(1, 0);
+
+    // Wire AI cannon sounds (t056): play a shot sound when any AI tank fires.
+    // Volume is lower than the player's shot to keep the player's shots perceptually
+    // prominent even when multiple AI tanks fire simultaneously.
+    this.aiController.onShot((_tank, _proj) => {
+      this.sound.playShot();
+    });
 
     // Assign abilities to AI tanks based on the current league (t046).
     // Gold+: specific slots get abilities matching VISION.md team compositions.
@@ -513,6 +536,9 @@ export class Game {
     this.particles.update(dt);
     this.cameraController.update(dt);
 
+    // SoundSystem: drain per-frame timers (shot cooldown, etc.) (t056).
+    this.sound.update(dt);
+
     // HUD — pass live round stats for the counters.
     // Use playerController so values reflect the active entity (tank or soldier).
     // maxHealth is passed so the bar fills to 100 % at full soldier HP (30), not 30 %.
@@ -572,7 +598,17 @@ export class Game {
       for (const proj of newProjectiles) {
         this.projectiles.add(proj);
       }
+      // Play cannon fire sound for the player (t056). Rate-limited inside playShot().
+      this.sound.playShot();
     }
+
+    // ---- Engine sound — start/stop based on movement state (t056) ----
+    if (isMoving && !this._playerWasMoving) {
+      this.sound.startEngine();
+    } else if (!isMoving && this._playerWasMoving) {
+      this.sound.stopEngine();
+    }
+    this._playerWasMoving = isMoving;
 
     // ---- On-foot soldier melee (t026/t034) ----
     // Melee swings are triggered by:
@@ -791,9 +827,11 @@ export class Game {
           this.teams.killTank(target);
         }
         this.particles.emitExplosion(hitPos, { count: 25, speed: 8 });
+        this.sound.playExplosion();
       } else {
         // Small impact burst for a non-lethal hit.
         this.particles.emitExplosion(hitPos, { count: 8, speed: 4, lifetime: 0.3 });
+        this.sound.playImpact();
       }
     }
   }
