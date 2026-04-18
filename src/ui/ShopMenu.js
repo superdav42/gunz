@@ -29,19 +29,8 @@ import {
   TANK_UPGRADE_ORDER,
   FOOT_UPGRADE_ORDER,
 }                                                       from '../data/UpgradeDefs.js';
-
-// ---------------------------------------------------------------------------
-// Cosmetic skin definitions (no league gate)
-// ---------------------------------------------------------------------------
-const SKIN_DEFS = [
-  { id: 'camo_green',    name: 'Camo Green',    price: 500,  description: 'Military woodland camo.' },
-  { id: 'desert_tan',    name: 'Desert Tan',    price: 750,  description: 'Sandy desert scheme.' },
-  { id: 'arctic_white',  name: 'Arctic White',  price: 1000, description: 'Snow camouflage.' },
-  { id: 'stealth_black', name: 'Stealth Black', price: 1500, description: 'All-black tactical finish.' },
-  { id: 'neon_blue',     name: 'Neon Blue',     price: 2000, description: 'Electric blue neon.' },
-  { id: 'chrome',        name: 'Chrome',        price: 3000, description: 'Mirror-polished chrome.' },
-  { id: 'gold_plated',   name: 'Gold Plated',   price: 5000, description: 'Prestige gold finish.' },
-];
+import { SkinDefs, SKIN_ORDER, getSkinDef }              from '../data/SkinDefs.js';
+import { SkinPreview }                                  from './SkinPreview.js';
 
 // ---------------------------------------------------------------------------
 // League label helper
@@ -66,6 +55,20 @@ export class ShopMenu {
 
     this._activeTab      = 'tanks';
     this._closeCallbacks = [];
+
+    /**
+     * Currently previewed skin ID in the Skins tab.
+     * Defaults to the first skin in SKIN_ORDER so the preview is never blank.
+     * @type {string|null}
+     */
+    this._selectedSkinId = SKIN_ORDER[0] ?? null;
+
+    /**
+     * Three.js rotating tank preview — created lazily when the Skins tab is
+     * opened, disposed when the shop closes.
+     * @type {SkinPreview|null}
+     */
+    this._skinPreview = null;
 
     this._el = document.getElementById('shop-menu');
     if (!this._el) {
@@ -94,6 +97,7 @@ export class ShopMenu {
 
   /** Hide the shop overlay and fire close callbacks. */
   close() {
+    this._disposeSkinPreview();
     this._el.classList.add('hidden');
     for (const fn of this._closeCallbacks) {
       fn();
@@ -110,6 +114,21 @@ export class ShopMenu {
       const tabBtn = e.target.closest('[data-tab]');
       if (tabBtn) {
         this._activeTab = tabBtn.dataset.tab;
+        this._render();
+        return;
+      }
+
+      // Skin card click (not the buy button) — update preview selection.
+      const skinCard = e.target.closest('[data-skin-select]');
+      if (skinCard && !e.target.closest('[data-buy]')) {
+        this._selectedSkinId = skinCard.dataset.skinSelect;
+        // Update preview colour immediately (no full re-render needed).
+        const def = SkinDefs[this._selectedSkinId];
+        if (def && this._skinPreview) {
+          this._skinPreview.setSkin(def.colorBody, def.colorTurret);
+        }
+        // Re-render to move the selection highlight; the preview canvas will
+        // be seamlessly re-mounted into the new DOM by _mountSkinPreview().
         this._render();
         return;
       }
@@ -162,6 +181,9 @@ export class ShopMenu {
         </div>
       </div>
     `;
+
+    // After innerHTML replacement, re-attach the SkinPreview canvas if needed.
+    this._mountSkinPreview();
   }
 
   /** @private Route to the active tab renderer. */
@@ -348,29 +370,107 @@ export class ShopMenu {
   }
 
   // ---------------------------------------------------------------------------
-  // Tab: Skins (no league gate)
+  // Tab: Skins — two-column layout: rotating 3D preview + scrollable skin list
   // ---------------------------------------------------------------------------
 
   /** @private */
   _renderSkins() {
-    const cards = SKIN_DEFS.map(def => {
+    // Ensure selectedSkinId defaults to the first skin if not yet set.
+    if (!this._selectedSkinId && SKIN_ORDER.length > 0) {
+      this._selectedSkinId = SKIN_ORDER[0];
+    }
+
+    const selectedDef = this._selectedSkinId ? SkinDefs[this._selectedSkinId] : SkinDefs[SKIN_ORDER[0]];
+
+    const cards = SKIN_ORDER.map(id => {
+      const def        = SkinDefs[id];
+      if (!def) return '';
       const owned      = this._save.hasItem('skin', def.id);
+      const locked     = !this._league.meetsLeagueRequirement(def.leagueRequired);
       const affordable = this._economy.canAfford(def.price);
+      const isSelected = def.id === this._selectedSkinId;
+
+      // Type label based on skin category.
+      const typeLabel = def.type === 'prestige' ? 'Prestige'
+                      : def.type === 'camo'     ? 'Camo'
+                      :                           'Cosmetic';
 
       return `
-        <div class="shop-card${owned ? ' owned' : ''}">
+        <div class="shop-card shop-skin-card${owned ? ' owned' : ''}${locked ? ' locked' : ''}${isSelected ? ' shop-skin-card-active' : ''}"
+             data-skin-select="${def.id}"
+             style="cursor:pointer;">
           <div class="shop-card-name">${def.name}
-            <span class="shop-type-tag">Cosmetic</span>
+            <span class="shop-type-tag">${typeLabel}</span>
           </div>
           <div class="shop-card-desc">${def.description}</div>
+          ${locked ? `<div class="shop-req-label">Requires ${leagueName(def.leagueRequired)}</div>` : ''}
           <div class="shop-card-footer">
-            ${this._buyFooter('skin', def.id, def.price, owned, false, affordable)}
+            ${this._buyFooter('skin', def.id, def.price, owned, locked, affordable)}
           </div>
         </div>
       `;
     }).join('');
 
-    return `<div class="shop-grid">${cards}</div>`;
+    return `
+      <div class="shop-skins-layout">
+        <div class="shop-skin-preview-col">
+          <div id="shop-skin-preview-mount" class="shop-skin-preview-mount"></div>
+          <div class="shop-skin-preview-name">${selectedDef ? selectedDef.name : ''}</div>
+          <div class="shop-skin-preview-desc">${selectedDef ? selectedDef.description : ''}</div>
+        </div>
+        <div class="shop-skin-grid-col">
+          <div class="shop-grid">${cards}</div>
+        </div>
+      </div>
+    `;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Skin preview lifecycle
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Create (or reuse) the SkinPreview instance and mount its canvas into the
+   * preview mount div that was just rendered. Called after every _render().
+   * @private
+   */
+  _mountSkinPreview() {
+    if (this._activeTab !== 'skins') {
+      // Leaving the skins tab — dispose to free GPU resources.
+      this._disposeSkinPreview();
+      return;
+    }
+
+    const mount = this._el.querySelector('#shop-skin-preview-mount');
+    if (!mount) return;
+
+    // Create the preview once; reuse across re-renders.
+    if (!this._skinPreview) {
+      this._skinPreview = new SkinPreview();
+    }
+
+    // Re-mount the canvas (it was removed when innerHTML was replaced).
+    this._skinPreview.mount(mount);
+
+    // Apply the currently selected skin colour.
+    const def = this._selectedSkinId
+      ? SkinDefs[this._selectedSkinId]
+      : SkinDefs[SKIN_ORDER[0]];
+    if (def) {
+      this._skinPreview.setSkin(def.colorBody, def.colorTurret);
+    }
+  }
+
+  /**
+   * Dispose the SkinPreview and free GPU resources.
+   * Safe to call multiple times.
+   * @private
+   */
+  _disposeSkinPreview() {
+    if (this._skinPreview) {
+      this._skinPreview.dispose();
+      this._skinPreview = null;
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -429,11 +529,13 @@ export class ShopMenu {
         this._showFlash(`${dataset.id} purchased!`, 'success');
         break;
 
-      case 'skin':
+      case 'skin': {
         this._save.addOwnedItem('skin', dataset.id);
         this._save.save();
-        this._showFlash(`${dataset.id} skin unlocked!`, 'success');
+        const skinDef = SkinDefs[dataset.id];
+        this._showFlash(`${skinDef ? skinDef.name : dataset.id} skin unlocked!`, 'success');
         break;
+      }
 
       case 'upgrade': {
         const tier     = parseInt(dataset.tier || '1', 10);

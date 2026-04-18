@@ -1650,6 +1650,82 @@
       border-color: rgba(255, 255, 255, 0.6);
       color: #fff;
     }
+
+    /* === Skin shop tab — rotating preview (t054) === */
+
+    .shop-skins-layout {
+      display: flex;
+      gap: 20px;
+      align-items: flex-start;
+    }
+
+    /* Left column: 3D preview + skin name */
+    .shop-skin-preview-col {
+      flex: 0 0 240px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .shop-skin-preview-mount {
+      width: 240px;
+      height: 200px;
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .shop-skin-preview-name {
+      color: #fff;
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      text-align: center;
+    }
+
+    .shop-skin-preview-desc {
+      color: rgba(255, 255, 255, 0.5);
+      font-size: 11px;
+      text-align: center;
+      line-height: 1.4;
+      padding: 0 8px;
+    }
+
+    /* Right column: scrollable skin card grid */
+    .shop-skin-grid-col {
+      flex: 1;
+      min-width: 0;
+    }
+
+    /* Selected skin card highlight */
+    .shop-skin-card-active {
+      border-color: #4caf50 !important;
+      background: rgba(76, 175, 80, 0.14) !important;
+    }
+
+    @media (max-width: 640px) {
+      .shop-skins-layout {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .shop-skin-preview-col {
+        flex: none;
+        width: 100%;
+        align-items: center;
+      }
+
+      .shop-skin-preview-mount {
+        width: 100%;
+        max-width: 320px;
+        height: 180px;
+      }
+    }
   </style>
 </head>
 <body>
