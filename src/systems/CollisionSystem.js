@@ -210,12 +210,12 @@ export class CollisionSystem {
         const dist = p.mesh.position.distanceTo(e.mesh.position);
         if (dist < 2.5) {
           const hitPos = p.mesh.position.clone();
-          // Cap actualDamage to remaining HP so scoreboard stats don't over-count overkill.
-          const actualDamage = Math.min(p.damage, e.health);
+          // takeDamage returns actual HP removed (post-armor, clamped to remaining HP).
+          // Using the return value ensures stats account for armor reduction correctly.
+          const actualDamage = e.takeDamage(p.damage);
           if (p.ownerTank) p.ownerTank.recordDamage(actualDamage);
-          // StatsTracker callback also uses the capped value (t010).
+          // StatsTracker callback also uses the capped/armored value (t010).
           if (this._onDamageDealt) this._onDamageDealt(e, actualDamage);
-          e.takeDamage(p.damage);
           this.projectiles.remove(i);
 
           if (e.health <= 0) {
@@ -264,10 +264,9 @@ export class CollisionSystem {
       const dist = p.mesh.position.distanceTo(player.mesh.position);
       if (dist < 2.5) {
         const hitPos = p.mesh.position.clone();
-        // Record damage dealt before applying it (health may clamp to 0)
-        const actualDamage = Math.min(p.damage, player.health);
+        // takeDamage returns actual HP removed (post-armor, clamped to remaining HP).
+        const actualDamage = player.takeDamage(p.damage);
         if (p.ownerTank) p.ownerTank.recordDamage(actualDamage);
-        player.takeDamage(p.damage);
         this.projectiles.remove(i);
 
         // Fire onExplosion for visual effect regardless of kill. (t032)
@@ -445,13 +444,13 @@ export class CollisionSystem {
       const dist = hitPos.distanceTo(e.mesh.position);
       if (dist >= radius) continue;
 
-      const falloff   = 1 - dist / radius;
-      const rawDmg    = p.damage * falloff;
-      const cappedDmg = Math.min(rawDmg, e.health);
+      const falloff  = 1 - dist / radius;
+      const rawDmg   = p.damage * falloff;
+      // takeDamage returns actual HP removed (post-armor, clamped to remaining HP).
+      const cappedDmg = e.takeDamage(rawDmg);
 
       if (this._onDamageDealt) this._onDamageDealt(e, cappedDmg);
       if (p.ownerTank) p.ownerTank.recordDamage(cappedDmg);
-      e.takeDamage(rawDmg);
 
       if (e.health <= 0) {
         inRange.push(e);
@@ -492,10 +491,10 @@ export class CollisionSystem {
 
     const falloff   = 1 - dist / radius;
     const rawDmg    = p.damage * falloff;
-    const cappedDmg = Math.min(rawDmg, player.health);
+    // takeDamage returns actual HP removed (post-armor, clamped to remaining HP).
+    const cappedDmg = player.takeDamage(rawDmg);
 
     if (p.ownerTank) p.ownerTank.recordDamage(cappedDmg);
-    player.takeDamage(rawDmg);
 
     if (player.health <= 0) {
       if (p.ownerTank) p.ownerTank.recordKill();

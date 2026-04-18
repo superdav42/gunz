@@ -78,6 +78,8 @@ export class Projectile {
    * @param {number}  [opts.splashRadius=0]                AoE radius (0 = point damage only). (t032)
    * @param {boolean} [opts.isArc=false]                   If true: strong gravity, ballistic arc. (t032)
    * @param {boolean} [opts.isExplosive=false]             If true: splash-eligible, explosive visual. (t032)
+   * @param {object|null} [opts.homingTarget=null]         Target mesh to home toward (Lock-On). (t044)
+   * @param {number}  [opts.homingStrength=3]              Turn rate toward target (rad/s). (t044)
    */
   constructor({
     position,
@@ -89,6 +91,8 @@ export class Projectile {
     splashRadius = 0,
     isArc = false,
     isExplosive = false,
+    homingTarget = null,
+    homingStrength = 3,
   }) {
     this.isPlayerOwned = isPlayerOwned;
     this.ownerTank     = ownerTank;
@@ -97,6 +101,14 @@ export class Projectile {
     this.splashRadius  = splashRadius;
     this.isArc         = isArc;
     this.isExplosive   = isExplosive;
+
+    /**
+     * Lock-On homing target. If set, the rocket gradually steers toward the
+     * target's mesh position on each update tick (t044).
+     * @type {{mesh: {position: import('three').Vector3}}|null}
+     */
+    this.homingTarget   = homingTarget;
+    this.homingStrength = homingStrength;
 
     // Longer lifetime for slow arc projectiles that need travel time.
     this.lifetime = isArc ? 6 : 3;
@@ -131,6 +143,21 @@ export class Projectile {
   }
 
   update(dt) {
+    // Lock-On homing: steer velocity toward the target's current position (t044).
+    // Uses exponential steering so the rocket curves naturally rather than snapping.
+    if (this.homingTarget && this.homingTarget.mesh) {
+      const targetPos = this.homingTarget.mesh.position;
+      const toTarget = new THREE.Vector3()
+        .subVectors(targetPos, this.mesh.position)
+        .normalize();
+      // Blend current direction toward target direction at homingStrength (rad/s).
+      // Clamp so the rocket can't turn more than 90° per second (avoids spiralling).
+      const blendFactor = Math.min(1, this.homingStrength * dt);
+      this.velocity
+        .lerp(toTarget.multiplyScalar(this.speed), blendFactor)
+        .setLength(this.speed);
+    }
+
     this.mesh.position.addScaledVector(this.velocity, dt);
     this.age += dt;
 

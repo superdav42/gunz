@@ -265,6 +265,21 @@ export class TeamManager {
   // Private helpers
   // ---------------------------------------------------------------------------
 
+  /**
+   * Tank class IDs assigned to each slot in a 6-tank team.
+   * Slot 0 is always the player (their chosen class — overridden at runtime when
+   * the loadout system is in place; 'standard' is the placeholder until t040).
+   * Slots 1-5 are AI teammates; varied classes make team composition visible on the
+   * field.  Full league-based composition tables land in t038.
+   */
+  static get AI_ALLY_CLASSES() {
+    return ['standard', 'scout', 'heavy', 'artillery', 'standard'];
+  }
+
+  static get AI_ENEMY_CLASSES() {
+    return ['standard', 'scout', 'heavy', 'artillery', 'standard', 'heavy'];
+  }
+
   _buildTeams() {
     // Team 0 — player side
     const playerTeam = {
@@ -275,12 +290,19 @@ export class TeamManager {
 
     for (let i = 0; i < TEAM_SIZE; i++) {
       const isPlayer = i === 0;
+      // Slot 0 = player (defaults to 'standard' until the loadout system from t040
+      // sets a real selection).  Slots 1-5 = AI allies with varied classes.
+      const tankClassId = isPlayer
+        ? 'standard'
+        : TeamManager.AI_ALLY_CLASSES[i - 1] || 'standard';
+
       const tank = new Tank({
         isPlayer,
         color: TEAM_COLORS[0].body,
         turretColor: TEAM_COLORS[0].turret,
         teamId: 0,
         name: isPlayer ? 'Player' : `Ally ${i}`,
+        tankClassId,
       });
 
       const pos = this._spawnPosition(i, 0);
@@ -299,12 +321,15 @@ export class TeamManager {
     };
 
     for (let i = 0; i < TEAM_SIZE; i++) {
+      const tankClassId = TeamManager.AI_ENEMY_CLASSES[i] || 'standard';
+
       const tank = new Tank({
         isPlayer: false,
         color: TEAM_COLORS[1].body,
         turretColor: TEAM_COLORS[1].turret,
         teamId: 1,
         name: `Enemy #${i + 1}`,
+        tankClassId,
       });
 
       const pos = this._spawnPosition(i, 1);

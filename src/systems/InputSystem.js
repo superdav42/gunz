@@ -21,6 +21,8 @@ export class InputSystem {
     this._turretAngle = null;
     /** One-shot: true on the frame E is pressed (exit/enter vehicle). */
     this._exitVehicleRequested = false;
+    /** One-shot: true on the frame Q is pressed (activate ability, t045). */
+    this._abilityRequested = false;
 
     // Mouse aim
     this._mouseAim = { active: false, x: 0, y: 0 };
@@ -39,6 +41,8 @@ export class InputSystem {
       if (e.code === 'KeyF') this._meleeRequested = true;
       // R key — manual reload for on-foot gun (t030)
       if (e.code === 'KeyR') this._reloadRequested = true;
+      // Q key — activate ability (t045)
+      if (e.code === 'KeyQ') this._abilityRequested = true;
       // Prevent Tab from shifting browser focus while held for the scoreboard
       if (e.code === 'Tab') e.preventDefault();
     });
@@ -166,6 +170,8 @@ export class InputSystem {
       tabHeld: !!this._keys['Tab'],
       /** One-shot: true on the frame E was pressed — exit tank or re-enter tank. */
       exitVehicle: this._exitVehicleRequested,
+      /** One-shot: true on the frame Q was pressed — activate ability (t045). */
+      abilityUsed: this._abilityRequested,
     };
 
     // Reset one-shot inputs
@@ -173,6 +179,7 @@ export class InputSystem {
     this._meleeRequested       = false;
     this._reloadRequested      = false;
     this._exitVehicleRequested = false;
+    this._abilityRequested     = false;
 
     return state;
   }
