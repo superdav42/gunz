@@ -43,8 +43,8 @@ test('lpRequired is strictly increasing', () => {
   }
 });
 
-test('champion lpToPromote is Infinity', () => {
-  assert.equal(LeagueDefs.champion.lpToPromote, Infinity);
+test('champion promotionLp is null', () => {
+  assert.equal(LeagueDefs.champion.promotionLp, null);
 });
 
 test('lpRequired matches VISION.md table', () => {
