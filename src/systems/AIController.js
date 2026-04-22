@@ -668,7 +668,12 @@ export class AIController {
     const turnSpeed = tank.turnRate;
 
     // River / mud zone speed penalty (t050): AI tanks move at 40% speed in rivers.
-    const moveSpeed = tank.speed * this._riverSpeedFactor(pos, RIVER_SPEED_TANK);
+    // Also sample the predicted post-move position so the penalty applies on the
+    // entry frame (mirrors PlayerController fix, bot finding: pre-move-only check).
+    const sinRY  = Math.sin(tank.mesh.rotation.y);
+    const cosRY  = Math.cos(tank.mesh.rotation.y);
+    const predPos = { x: pos.x - sinRY * tank.speed * dt, z: pos.z - cosRY * tank.speed * dt };
+    const moveSpeed = tank.speed * this._riverSpeedFactor(pos, RIVER_SPEED_TANK, predPos);
 
     // --- Per-class fire and aggro ranges ---
     // fireRange scales with the tank's effective range stat so Artillery AI
@@ -997,18 +1002,21 @@ export class AIController {
 
   /**
    * Return the speed multiplier for a world position.
-   * Returns `riverFactor` when the position is inside a river/mud zone,
-   * otherwise 1.0 (no penalty).  Safe to call when `_mapLayout` is null.
+   * Returns `riverFactor` when either `pos` or `predPos` (optional predicted
+   * post-move position) is inside a river/mud zone, otherwise 1.0 (no penalty).
+   * Safe to call when `_mapLayout` is null.
    *
-   * @param {{x: number, z: number}} pos — world XZ position (mesh.position works)
+   * @param {{x: number, z: number}} pos — current world XZ position
    * @param {number} riverFactor — penalty factor (RIVER_SPEED_TANK or RIVER_SPEED_SOLDIER)
+   * @param {{x: number, z: number}|null} [predPos] — optional predicted post-move position
    * @returns {number}
    * @private
    */
-  _riverSpeedFactor(pos, riverFactor) {
-    return (this._mapLayout !== null && this._mapLayout.isInRiver(pos.x, pos.z))
-      ? riverFactor
-      : 1.0;
+  _riverSpeedFactor(pos, riverFactor, predPos = null) {
+    if (this._mapLayout === null) return 1.0;
+    const inRiver = this._mapLayout.isInRiver(pos.x, pos.z) ||
+        (predPos !== null && this._mapLayout.isInRiver(predPos.x, predPos.z));
+    return inRiver ? riverFactor : 1.0;
   }
 
   /**

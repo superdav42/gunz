@@ -310,10 +310,18 @@ export class PlayerController {
     const turnSpeed = tank.turnRate;
 
     // River / mud zone speed penalty (t050): tanks move at 40% speed in rivers.
-    // Check current position before movement so the penalty applies as soon as
-    // the tank enters the zone.
-    const inRiver   = this.mapLayout !== null &&
-                      this.mapLayout.isInRiver(tank.mesh.position.x, tank.mesh.position.z);
+    // Sample both the current position and the predicted post-move position so
+    // the penalty applies on the entry frame even when a fast tank crosses the
+    // boundary in a single step (bot finding: pre-move-only check, ~1 unit drift).
+    const curX  = tank.mesh.position.x;
+    const curZ  = tank.mesh.position.z;
+    const sinRY = Math.sin(tank.mesh.rotation.y);
+    const cosRY = Math.cos(tank.mesh.rotation.y);
+    const predX = curX - sinRY * tank.speed * dt;
+    const predZ = curZ - cosRY * tank.speed * dt;
+    const inRiver = this.mapLayout !== null &&
+        (this.mapLayout.isInRiver(curX, curZ) ||
+         this.mapLayout.isInRiver(predX, predZ));
     const moveSpeed = tank.speed * (inRiver ? RIVER_SPEED_TANK : 1.0);
 
     // Lockdown Mode (t043): suppress all hull movement while active.
