@@ -11,7 +11,7 @@
  *   Lose match (1-2 close)  : -10 LP
  *   Lose match (0-2 sweep)  : -20 LP
  *
- * Promotion:  LP reaches the current league's `lpToPromote` threshold.
+ * Promotion:  LP reaches the current league's `promotionLp` threshold.
  * Demotion:   LP falls below the current league's `lpRequired` threshold
  *             (can only demote one tier at a time due to the LP floor).
  *

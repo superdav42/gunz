@@ -426,14 +426,14 @@ export class MainMenu {
 
     // LP label
     this._lpLabelEl.textContent =
-      def.lpToPromote === Infinity
+      def.promotionLp === null
         ? `${lp} LP — MAX`
-        : `${lp} / ${def.lpToPromote} LP`;
+        : `${lp} / ${def.promotionLp} LP`;
 
     // Bar fill
-    const span = def.lpToPromote === Infinity
+    const span = def.promotionLp === null
       ? 1
-      : def.lpToPromote - (def.lpRequired || 0);
+      : def.promotionLp - (def.lpRequired || 0);
     const pct = span > 0
       ? Math.min(100, Math.max(0, ((lp - (def.lpRequired || 0)) / span) * 100))
       : 100;
